@@ -614,19 +614,21 @@ bool ImModalButton(const char* label, int lineIndex = 0, int lineTotal = 1)
 {
     assert(lineIndex < lineTotal);
     auto& style = ImGui::GetStyle();
-    float padding = style.FramePadding.x;
-    float width = ImGui::GetContentRegionAvail().x / lineTotal;
     if (lineIndex)
         ImGui::SameLine();
-    return ImGui::Button(label, lineTotal > 1 ? ImVec2{width - padding, 0} : ImVec2{width, 0});
+    const int remaining = lineTotal - lineIndex;
+    const float width = (ImGui::GetContentRegionAvail().x - style.ItemSpacing.x * (remaining - 1)) / remaining;
+    return ImGui::Button(label, ImVec2{std::max(1.0f, width), 0});
 }
 
 void ImSetNextWindowCentered()
 {
-    auto& style = ImGui::GetStyle();
-    float padding = style.FramePadding.x;
-    ImGui::SetNextWindowPos({0.0f, ImGui::GetContentRegionAvail().y / 2 + padding}, 0, {0.0f, 0.5f});
-    ImGui::SetNextWindowSize({ImGui::GetIO().DisplaySize.x, 0});
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float margin = ImGui::GetStyle().WindowPadding.x;
+    const float width = std::max(1.0f, std::min(display.x - margin * 2, ImGui::GetFontSize() * 44));
+    ImGui::SetNextWindowPos(display * 0.5f, ImGuiCond_Always, {0.5f, 0.5f});
+    ImGui::SetNextWindowSize({width, 0});
+    ImGui::SetNextWindowSizeConstraints({width, 0}, {width, std::max(1.0f, display.y - margin * 2)});
 }
 
 void ImTextWithBorder(const char* text, int color, float rounding = 0.0f, float thickness = 1.0f)
@@ -846,6 +848,52 @@ MDRResult StartConnection(
 }
 #pragma endregion
 
+// A small vector illustration stays crisp with the UI's DPI scale and model palette.
+void DrawListeningHero(const char* title, const char* subtitle)
+{
+    const float unit = ImGui::GetFontSize();
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float height = unit * 6.5f;
+    auto* draw = ImGui::GetWindowDrawList();
+    const ImU32 accent = ImGui::GetColorU32(ImGuiCol_CheckMark);
+    draw->AddRectFilled(start, start + ImVec2(width, height),
+                        ImGui::GetColorU32(ImGuiCol_Button), unit);
+    // Hide the illustration on narrow windows to leave room for the heading.
+    const bool illustrated = width > unit * 25;
+    if (illustrated)
+    {
+        const ImVec2 center = start + ImVec2(width - unit * 4, height * 0.5f);
+        draw->AddCircleFilled(center, unit * 2.6f, ImGui::GetColorU32(ImGuiCol_FrameBg));
+        draw->PathArcTo(center, unit * 1.6f, 3.14159265f, 6.2831853f, 32);
+        draw->PathStroke(accent, 0, unit * 0.22f);
+        for (float side : {-1.0f, 1.0f})
+        {
+            const ImVec2 cup = center + ImVec2(side * unit * 1.55f, unit * 0.3f);
+            draw->AddRectFilled(cup - ImVec2(unit * 0.35f, unit * 0.75f),
+                                cup + ImVec2(unit * 0.35f, unit * 0.75f), accent, unit * 0.3f);
+        }
+    }
+    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * 0.8f));
+    ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_CheckMark), "PERSONAL AUDIO");
+    ImGui::PushFont(nullptr, unit * 1.6f);
+    // Fit longer model names without colliding with the illustration.
+    const float titleWidth = std::max(unit, width - unit * (illustrated ? 9.0f : 2.4f));
+    const float measured = ImGui::CalcTextSize(title).x;
+    if (measured > titleWidth)
+    {
+        ImGui::PopFont();
+        ImGui::PushFont(nullptr, unit * 1.6f * titleWidth / measured);
+    }
+    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * 2.2f));
+    ImGui::TextUnformatted(title);
+    ImGui::PopFont();
+    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * 4.5f));
+    ImGui::TextDisabled("%s", subtitle);
+    ImGui::SetCursorScreenPos(start);
+    ImGui::Dummy({width, height});
+}
+
 void DrawDeviceDiscovery()
 {
     assert(connState == CONN_STATE_NO_CONNECTION);
@@ -857,11 +905,8 @@ void DrawDeviceDiscovery()
     {
         static MDRDeviceInfo* pDeviceInfo = nullptr;
         static int nDeviceInfo = 0;
-        ImGui::PushFont(nullptr, ImGui::GetContentRegionAvail().x * 0.05f);
-        ImTextCentered("SonyHeadphonesClient");
-        ImGui::PopFont();
-        ImTextCentered(mdr::Format("Version: {}, Branch: {}, Commit: {}, On {} ({})", CLIENT_VERSION, MDR_GIT_BRANCH_NAME, MDR_GIT_COMMIT_HASH, MDR_PLATFORM_OS, MDR_PLATFORM_PROCESSOR)
-                           .c_str());
+        DrawListeningHero("Your sound. Your space.", "Connect your Sony headphones.");
+        ImGui::SeparatorText("Connection");
         // Chose, and have the GATT backend active
         static bool usingBLE = false;
         static DEVICE_TYPE deviceType = DEVICE_TYPE_AUTO;
@@ -870,9 +915,6 @@ void DrawDeviceDiscovery()
         bool needSwitchClientPlatform = clientPlatformConnectionGet() == nullptr;
         {
             ImStylesRAII styles;
-            styles.PushFont(nullptr, 12.0f);
-            styles.PushVar(ImGuiStyleVar_FramePadding, ImVec2{});
-            styles.PushVar(ImGuiStyleVar_FrameRounding, 0.0f);
             {
                 ImStylesRAII styles;
                 if (usingBLE)
@@ -891,9 +933,6 @@ void DrawDeviceDiscovery()
         ImGui::BeginDisabled(usingBLE);
         {
             ImStylesRAII styles;
-            styles.PushFont(nullptr, 12.0f);
-            styles.PushVar(ImGuiStyleVar_FramePadding, ImVec2{});
-            styles.PushVar(ImGuiStyleVar_FrameRounding, 0.0f);
             constexpr std::array labels{PSI_PLUS_SIGN " Auto", PSI_FAST_FORWARD " V2", PSI_FORWARD " V1"};
             constexpr std::array tooltips{
                 "Auto-detect: tries the V2 (XM5+) service first and falls back to the legacy V1 service if it can't connect.",
@@ -942,18 +981,30 @@ void DrawDeviceDiscovery()
             std::span<MDRDeviceInfo> devices{pDeviceInfo, static_cast<size_t>(nDeviceInfo)};
             if (!devices.empty())
             {
+                deviceIndex = std::clamp(deviceIndex, 0, static_cast<int>(devices.size()) - 1);
+                ImGui::BeginChild("##DiscoveredDevices", {0, ImGui::GetFrameHeightWithSpacing() * std::min(3, nDeviceInfo)},
+                                  ImGuiChildFlags_None);
                 int btnIndex = 0;
                 for (const auto& device : devices)
                 {
                     ImGui::PushID(device.szDeviceMacAddress);
-                    ImGui::RadioButton(device.szDeviceName, &deviceIndex, btnIndex++);
+                    ImStylesRAII rowStyles;
+                    rowStyles.PushVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+                    rowStyles.PushCol(ImGuiCol_Button, ImGui::GetStyleColorVec4(
+                        deviceIndex == btnIndex ? ImGuiCol_Header : ImGuiCol_FrameBg));
+                    rowStyles.PushCol(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
+                    rowStyles.PushCol(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+                    if (ImGui::Button(device.szDeviceName, {ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight()}))
+                        deviceIndex = btnIndex;
+                    ++btnIndex;
                     ImGui::PopID();
                 }
+                ImGui::EndChild();
             }
             else
             {
-                ImGui::TextWrapped(PSI_WARNING_SIGN " No devices available. Make sure your Bluetooth radio is turned "
-                                                    "on, and a compatible device is connected.");
+                ImGui::TextUnformatted(PSI_BLUETOOTH " Ready when you are");
+                ImGui::TextWrapped("Turn on Bluetooth and connect your headphones in system settings, then refresh.");
             }
             ImGui::BeginDisabled(devices.empty());
             if (ImModalButton(PSI_LINK " Connect", 0, 2))
@@ -977,10 +1028,15 @@ void DrawDeviceDiscovery()
                                .c_str());
         }
         DrawDeviceList();
-        ImGui::SeparatorText(PSI_INFO_SIGN_ALT " Select BLE (GATT) if your device is connected via LE Audio, and "
-                                               "Classic if you don't know what that means or otherwise.");
-        ImTextCentered(PSI_WARNING_SIGN
-                       " This product is not affiliated with Sony. Use at your own risk. " PSI_WARNING_SIGN);
+        ImGui::TextWrapped("Use Classic for most devices. Choose BLE (GATT) for LE Audio connections.");
+        ImGui::Separator();
+        ImGui::TextDisabled("SonyHeadphonesClient  /  %s", CLIENT_VERSION);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Branch: %s\nCommit: %s\n%s (%s)", MDR_GIT_BRANCH_NAME,
+                              MDR_GIT_COMMIT_HASH, MDR_PLATFORM_OS, MDR_PLATFORM_PROCESSOR);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Independent client. Not affiliated with Sony. Use at your own risk.");
+        ImGui::PopTextWrapPos();
 #ifdef MDR_CLIENT_DEBUGGER
         ImGui::Separator();
         if (ImModalButton("Protocol Debugger"))
@@ -1170,56 +1226,59 @@ void DrawDeviceControlsHeader()
         ImGui::PopFont();
         ImGui::EndMenuBar();
     }
-    // Stats
-    if (ImGui::BeginTable("##Stats", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable))
+    DrawListeningHero(modelName.empty() ? "Your headphones" : modelName.c_str(),
+                      mdrHeadphonesIsReady(gDevice) ? "Connected / Ready to listen" : "Connected / Syncing settings");
+    const int columns = ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 32 ? 2 : 1;
+    if (ImGui::BeginTable("##Stats", columns, ImGuiTableFlags_SizingStretchSame))
     {
-        ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-        /* Batteries */
+        ImGui::TableNextColumn();
+        ImGui::PushStyleColor(ImGuiCol_ChildBg,
+            MaterialYouTheme::ArgbToImVec4(MaterialYouTheme::FixedSurfaceColors::surfaceContainerLow));
+        ImGui::BeginChild("##BatteryCard", {0, 0}, ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+        ImGui::TextDisabled("BATTERY");
+        bool hasBattery = false;
+        for (const MDRBattery& battery : gState.mBatteries)
         {
-            if (ImGui::BeginTable("##Battery", 2, ImGuiTableFlags_SizingStretchProp))
+            if (!battery.present || !battery.update_threshold_percent)
+                continue;
+            hasBattery = true;
+            const char* label = battery.part == MDR_BATTERY_LEFT ? "Left" :
+                battery.part == MDR_BATTERY_RIGHT ? "Right" :
+                battery.part == MDR_BATTERY_CASE ? "Case" : "Headphones";
+            ImGui::Text("%s  %u%%", label, static_cast<unsigned>(battery.level_percent));
+            const char* charging = FormatChargingState(battery.charging);
+            if (*charging)
             {
-                for (const MDRBattery& battery : gState.mBatteries)
-                {
-                    if (!battery.present || !battery.update_threshold_percent)
-                        continue;
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    const char* label = battery.part == MDR_BATTERY_LEFT ? "L" :
-                        battery.part == MDR_BATTERY_RIGHT ? "R" :
-                        battery.part == MDR_BATTERY_CASE ? "Case" : "Battery";
-                    ImGui::Text("%s: %u%%", label, static_cast<unsigned>(battery.level_percent));
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::ProgressBar(
-                        battery.level_percent / 100.0f, {-1, 0}, FormatChargingState(battery.charging));
-                }
-                ImGui::EndTable();
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", charging);
             }
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, battery.level_percent <= 20
+                ? MaterialYouTheme::ArgbToImVec4(MaterialYouTheme::FixedSurfaceColors::error)
+                : ImGui::GetStyleColorVec4(ImGuiCol_CheckMark));
+            ImGui::ProgressBar(std::clamp(battery.level_percent / 100.0f, 0.0f, 1.0f),
+                               {-1, ImGui::GetFontSize() * 0.35f}, "");
+            ImGui::PopStyleColor();
         }
-        ImGui::TableSetColumnIndex(1);
-        /* Now Playing */
-        {
-            ImGui::Text(PSI_VOLUME_UP " Now Playing");
-            if (ImGui::BeginTable("##NowPlaying", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerH))
-            {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::Text("Title");
-                ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%s", GetText(MDR_TEXT_TRACK_TITLE).c_str());
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::Text("Album");
-                ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%s", GetText(MDR_TEXT_TRACK_ALBUM).c_str());
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::Text("Artist");
-                ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%s", GetText(MDR_TEXT_TRACK_ARTIST).c_str());
-                ImGui::EndTable();
-            }
-        }
+        if (!hasBattery)
+            ImGui::TextDisabled("Waiting for battery status");
+        ImGui::EndChild();
+        ImGui::TableNextColumn();
+        ImGui::BeginChild("##PlayingCard", {0, 0}, ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+        ImGui::TextDisabled("NOW PLAYING");
+        const auto title = GetText(MDR_TEXT_TRACK_TITLE);
+        const auto artist = GetText(MDR_TEXT_TRACK_ARTIST);
+        const auto album = GetText(MDR_TEXT_TRACK_ALBUM);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(title.empty() ? "Nothing playing yet" : title.c_str());
+        if (!artist.empty())
+            ImGui::TextDisabled("%s", artist.c_str());
+        if (!album.empty())
+            ImGui::TextDisabled("%s", album.c_str());
+        if (title.empty())
+            ImGui::TextDisabled("Play something on your connected device.");
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
         ImGui::EndTable();
     }
 }
@@ -1264,7 +1323,7 @@ void DrawDeviceControlsPlayback()
             mdrHeadphonesPlayback(gDevice, &command);
         }
     }
-    if (ImModalButton(PSI_STEP_FORWARD "Next", 2, 3))
+    if (ImModalButton(PSI_STEP_FORWARD " Next", 2, 3))
     {
         MDRPlaybackCommand command{};
         command.action = MDR_PLAYBACK_NEXT;
@@ -1962,7 +2021,7 @@ void DrawDeviceControls()
     if (!gDevice)
         return;
     ImGui::Separator();
-    ImGui::BeginChild("##ControlTabs");
+    ImGui::BeginChild("##ControlTabs", {0, 0}, ImGuiChildFlags_Borders);
     DrawDeviceControlsTabs();
     ImScrollWhenDraggingAnywhere(ImGui::GetIO().MouseDelta, ImGuiMouseButton_Left);
     ImGui::EndChild();

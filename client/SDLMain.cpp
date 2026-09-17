@@ -281,11 +281,24 @@ int main(int argc, char** argv)
     ImGui::StyleColorsDark(); // Base fallback
     MaterialYouTheme::ApplyDefault();
     auto& style = ImGui::GetStyle();
+    style.WindowPadding = ImVec2(24.0f, 20.0f);
+    style.FramePadding = ImVec2(12.0f, 9.0f);
+    style.ItemSpacing = ImVec2(10.0f, 12.0f);
+    style.ItemInnerSpacing = ImVec2(8.0f, 6.0f);
+    style.CellPadding = ImVec2(12.0f, 8.0f);
+    style.WindowRounding = 16.0f;
+    style.ChildRounding = 12.0f;
+    style.PopupRounding = 12.0f;
+    style.FrameRounding = 8.0f;
+    style.GrabRounding = 8.0f;
+    style.TabRounding = 8.0f;
+    style.ScrollbarSize = 10.0f;
+    style.ScrollbarRounding = 8.0f;
+    style.WindowBorderSize = 0.0f;
+    style.ChildBorderSize = 1.0f;
     style.ScaleAllSizes(displayScale);
     style.FontScaleDpi = displayScale;
-    style.FrameRounding = 8.0f;
     style.CircleTessellationMaxError = 0.01f;
-    style.FramePadding = ImVec2(8.0f, 8.0f);
     // Setup Platform/Renderer backends
     {
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls

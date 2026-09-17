@@ -80,7 +80,7 @@ inline void Apply(const Theme& theme) {
 
     // Title bar
     c[ImGuiCol_TitleBg]          = ArgbToImVec4(FixedSurfaceColors::surfaceContainerLow);
-    c[ImGuiCol_TitleBgActive]    = ArgbToImVec4(FixedSurfaceColors::inverseSurface);
+    c[ImGuiCol_TitleBgActive]    = ArgbToImVec4(FixedSurfaceColors::surfaceContainerHigh);
     c[ImGuiCol_TitleBgCollapsed] = ArgbToImVec4(FixedSurfaceColors::surface);
 
     // Text (fixed)
@@ -88,7 +88,7 @@ inline void Apply(const Theme& theme) {
     c[ImGuiCol_TextDisabled]     = ArgbToImVec4(FixedSurfaceColors::onSurfaceVariant);
 
     // Borders (fixed)
-    c[ImGuiCol_Border]           = ArgbToImVec4(FixedSurfaceColors::outline);
+    c[ImGuiCol_Border]           = ArgbToImVec4(FixedSurfaceColors::outlineVariant, 0.6f);
     c[ImGuiCol_BorderShadow]     = ImVec4(0, 0, 0, 0);
     c[ImGuiCol_Separator]        = ArgbToImVec4(FixedSurfaceColors::outlineVariant);
     c[ImGuiCol_SeparatorHovered] = ArgbToImVec4(theme.primary, 0.78f);
@@ -98,9 +98,9 @@ inline void Apply(const Theme& theme) {
     c[ImGuiCol_TableBorderLight] = ArgbToImVec4(FixedSurfaceColors::outlineVariant);
 
     // Frame backgrounds: primary tint with increasing opacity
-    c[ImGuiCol_FrameBg]          = ArgbToImVec4(theme.primary, 0.20f);
-    c[ImGuiCol_FrameBgHovered]   = ArgbToImVec4(theme.primary, 0.40f);
-    c[ImGuiCol_FrameBgActive]    = ArgbToImVec4(theme.primary, 0.67f);
+    c[ImGuiCol_FrameBg]          = ArgbToImVec4(FixedSurfaceColors::surfaceContainerHighest);
+    c[ImGuiCol_FrameBgHovered]   = ArgbToImVec4(theme.primary, 0.24f);
+    c[ImGuiCol_FrameBgActive]    = ArgbToImVec4(theme.primary, 0.35f);
 
     // Scrollbar
     c[ImGuiCol_ScrollbarGrab]        = ArgbToImVec4(FixedSurfaceColors::outline);
@@ -114,19 +114,19 @@ inline void Apply(const Theme& theme) {
 
     // Buttons: primary tint, brighter on hover/active
     c[ImGuiCol_Button]           = ArgbToImVec4(theme.primary, 0.25f);
-    c[ImGuiCol_ButtonHovered]    = ArgbToImVec4(theme.primary, 0.50f);
-    c[ImGuiCol_ButtonActive]     = ArgbToImVec4(theme.primary, 0.75f);
+    c[ImGuiCol_ButtonHovered]    = ArgbToImVec4(theme.primary, 0.36f);
+    c[ImGuiCol_ButtonActive]     = ArgbToImVec4(theme.primary, 0.45f);
 
     // Headers: primary tint with increasing opacity
     c[ImGuiCol_Header]           = ArgbToImVec4(theme.primary, 0.22f);
-    c[ImGuiCol_HeaderHovered]    = ArgbToImVec4(theme.primary, 0.50f);
-    c[ImGuiCol_HeaderActive]     = ArgbToImVec4(theme.primary, 0.75f);
+    c[ImGuiCol_HeaderHovered]    = ArgbToImVec4(theme.primary, 0.30f);
+    c[ImGuiCol_HeaderActive]     = ArgbToImVec4(theme.primary, 0.40f);
 
     // Tabs
     c[ImGuiCol_Tab]                    = ArgbToImVec4(FixedSurfaceColors::surfaceContainerLow);
     c[ImGuiCol_TabSelected]            = ArgbToImVec4(theme.primaryContainer);
     c[ImGuiCol_TabSelectedOverline]    = ArgbToImVec4(theme.primary);
-    c[ImGuiCol_TabHovered]             = ArgbToImVec4(theme.primary);
+    c[ImGuiCol_TabHovered]             = ArgbToImVec4(theme.primaryContainer);
     c[ImGuiCol_TabDimmed]              = ArgbToImVec4(FixedSurfaceColors::surface);
     c[ImGuiCol_TabDimmedSelected]      = ArgbToImVec4(FixedSurfaceColors::surfaceContainerHigh);
     c[ImGuiCol_TabDimmedSelectedOverline] = ArgbToImVec4(FixedSurfaceColors::outline);
