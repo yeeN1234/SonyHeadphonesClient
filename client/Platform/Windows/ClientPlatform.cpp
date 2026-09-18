@@ -130,6 +130,55 @@ MDRConnection* clientPlatformConnectionGet()
     [[unlikely]] return nullptr;
 }
 
+/* ---- Launch at login: HKCU\Software\Microsoft\Windows\CurrentVersion\Run ---- */
+static const wchar_t* const kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+static const wchar_t* const kRunValue = L"SonyHeadphonesClient";
+
+int clientPlatformAutoStartSupported(void)
+{
+    return 1;
+}
+
+int clientPlatformAutoStartGet(void)
+{
+    DWORD size = 0;
+    return RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRunValue, RRF_RT_REG_SZ, nullptr, nullptr, &size) ==
+        ERROR_SUCCESS;
+}
+
+int clientPlatformAutoStartSet(int enabled)
+{
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) !=
+        ERROR_SUCCESS)
+        return 0;
+    LSTATUS status;
+    if (enabled)
+    {
+        wchar_t exe[MAX_PATH];
+        const DWORD length = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        if (length == 0 || length >= MAX_PATH)
+        {
+            RegCloseKey(key);
+            return 0;
+        }
+        wchar_t command[MAX_PATH + 32];
+        wcscpy_s(command, L"\"");
+        wcscat_s(command, exe);
+        wcscat_s(command, L"\" --minimized");
+        status = RegSetValueExW(key, kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(command),
+                                static_cast<DWORD>((wcslen(command) + 1) * sizeof(wchar_t)));
+    }
+    else
+    {
+        status = RegDeleteValueW(key, kRunValue);
+        if (status == ERROR_FILE_NOT_FOUND)
+            status = ERROR_SUCCESS;
+    }
+    RegCloseKey(key);
+    return status == ERROR_SUCCESS;
+}
+
 void clientPlatformDestroy()
 {
     clientPlatformTrayDestroy();

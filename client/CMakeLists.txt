@@ -55,6 +55,7 @@ target_sources(
         Client.cpp
         PacketObserver.cpp
         PayloadRecorder.cpp
+        Settings.cpp
         Fonts/PlexSansIcon.c
 )
 

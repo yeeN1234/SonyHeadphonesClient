@@ -95,6 +95,22 @@ extern "C" {
      * @brief Remove the tray icon and release its resources. Safe to call when never initialized.
      */
     extern void clientPlatformTrayDestroy(void);
+    /**
+     * @brief Show a transient notification anchored to the tray icon (no-op where unsupported).
+     */
+    extern void clientPlatformTrayNotify(const char* title, const char* message);
+
+    /* ---- Launch at login ---------------------------------------------------------------------- */
+    /** @return Non-zero when this platform can register the app to start at login. */
+    extern int clientPlatformAutoStartSupported(void);
+    /** @return Non-zero when the app is currently registered to start at login. */
+    extern int clientPlatformAutoStartGet(void);
+    /**
+     * @brief Register (or unregister) the current executable to start at login, minimized.
+     * Re-registering refreshes the stored path, so call it at startup when the setting is on.
+     * @return Non-zero on success.
+     */
+    extern int clientPlatformAutoStartSet(int enabled);
 
     /**
      * @brief Master clean up function.

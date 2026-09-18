@@ -102,6 +102,11 @@ void __dont_touch_my_garbage_exclamation_marks__()
 
 int clientPlatformLocateEmojiFontBinary(const char** outData) { *outData = nullptr; return 0; }
 
+int clientPlatformAutoStartSupported(void) { return 0; }
+int clientPlatformAutoStartGet(void) { return 0; }
+int clientPlatformAutoStartSet(int) { return 0; }
+void clientPlatformTrayNotify(const char*, const char*) {}
+
 /* System tray is not implemented on this platform. */
 int clientPlatformTrayInit(void) { return 0; }
 void clientPlatformTrayUpdate(const ClientTrayStatus*) {}

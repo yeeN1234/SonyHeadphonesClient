@@ -437,6 +437,20 @@ void clientPlatformTrayUpdate(const ClientTrayStatus* status)
     RefreshIcon();
 }
 
+void clientPlatformTrayNotify(const char* title, const char* message)
+{
+    if (!gTrayWnd || !gIconAdded)
+        return;
+    NOTIFYICONDATAW data = MakeNotifyData();
+    data.uFlags = NIF_INFO;
+    data.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME;
+    if (title)
+        MultiByteToWideChar(CP_UTF8, 0, title, -1, data.szInfoTitle, sizeof(data.szInfoTitle) / sizeof(wchar_t));
+    if (message)
+        MultiByteToWideChar(CP_UTF8, 0, message, -1, data.szInfo, sizeof(data.szInfo) / sizeof(wchar_t));
+    Shell_NotifyIconW(NIM_MODIFY, &data);
+}
+
 int clientPlatformTrayPollEvent(ClientTrayEvent* outEvent)
 {
     if (!outEvent || gEventCount == 0)

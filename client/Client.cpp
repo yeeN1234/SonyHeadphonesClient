@@ -20,6 +20,7 @@
 #include "MaterialYouTheme.hpp"
 #include "PacketObserver.hpp"
 #include "Platform/Platform.hpp"
+#include "Settings.hpp"
 #ifdef MDR_CLIENT_DEBUGGER
 #include "Debugger.hpp"
 #endif
@@ -756,6 +757,8 @@ struct ConnectionAttemptState
     static constexpr uint64_t kAttemptTimeoutMs = 10'000;
 
     std::string address;
+    std::string name;      // Display name from discovery, remembered on success
+    bool automatic{};      // Started by auto-connect rather than a click
     std::array<const char*, 2> services{};
     std::string lastError;
     size_t serviceCount{};
@@ -765,6 +768,13 @@ struct ConnectionAttemptState
 };
 
 ConnectionAttemptState connectionAttempt;
+
+// Auto-connect bookkeeping. Suppressed after a manual disconnect/cancel until the next manual connect.
+bool gAutoConnectSuppressed = false;
+uint64_t gNextAutoConnectMs = 0;
+std::string gLastDisconnectMessage;
+constexpr uint64_t kAutoConnectRetryMs = 15'000;
+constexpr uint64_t kReconnectGraceMs = 3'000;
 
 const char* ConnectionAttemptName()
 {
@@ -822,11 +832,15 @@ MDRResult AdvanceConnectionAttempt(MDRConnection* conn, MDRResult reason)
 MDRResult StartConnection(
     MDRConnection* conn,
     const char* address,
+    const char* name,
     bool usingBLE,
-    DEVICE_TYPE deviceType)
+    DEVICE_TYPE deviceType,
+    bool automatic = false)
 {
     connectionAttempt = {};
     connectionAttempt.address = address;
+    connectionAttempt.name = name ? name : "";
+    connectionAttempt.automatic = automatic;
     connectionAttempt.ble = usingBLE;
     if (usingBLE)
     {
@@ -892,6 +906,35 @@ void DrawListeningHero(const char* title, const char* subtitle)
     ImGui::TextDisabled("%s", subtitle);
     ImGui::SetCursorScreenPos(start);
     ImGui::Dummy({width, height});
+}
+
+void DrawAppSettings()
+{
+    ClientSettings& settings = clientSettings();
+    if (ImGui::Checkbox("Keep running in the system tray when the window is closed", &settings.closeToTray))
+        clientSettingsSave();
+    ImGui::BeginDisabled(!clientPlatformAutoStartSupported());
+    if (ImGui::Checkbox("Start with Windows (minimized to the tray)", &settings.autoStart))
+    {
+        if (!clientPlatformAutoStartSet(settings.autoStart ? 1 : 0))
+            settings.autoStart = clientPlatformAutoStartGet() != 0;
+        clientSettingsSave();
+    }
+    ImGui::EndDisabled();
+    if (!settings.lastDeviceAddress.empty())
+    {
+        ImGui::TextDisabled("Auto-connect: %s (%s)",
+                            settings.lastDeviceName.empty() ? "last device" : settings.lastDeviceName.c_str(),
+                            settings.lastDeviceAddress.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Forget"))
+        {
+            settings.lastDeviceAddress.clear();
+            settings.lastDeviceName.clear();
+            settings.lastDeviceProtocol = 0;
+            clientSettingsSave();
+        }
+    }
 }
 
 void DrawDeviceDiscovery()
@@ -984,9 +1027,40 @@ void DrawDeviceDiscovery()
         constexpr uint64_t kAutoRefreshIntervalMs = 2000;
         if (connInitResult == MDR_RESULT_OK && SDL_GetTicks() - lastRefreshMs >= kAutoRefreshIntervalMs)
             RefreshDeviceList();
+        // Auto-connect: the last successfully connected device shows up -> connect without a click.
+        {
+            const ClientSettings& settings = clientSettings();
+            if (connInitResult == MDR_RESULT_OK && !gAutoConnectSuppressed && !settings.lastDeviceAddress.empty() &&
+                settings.lastDeviceBLE == usingBLE && SDL_GetTicks() >= gNextAutoConnectMs)
+            {
+                for (const MDRDeviceInfo& device : std::span<MDRDeviceInfo>{pDeviceInfo, static_cast<size_t>(nDeviceInfo)})
+                {
+                    if (SDL_strcasecmp(device.szDeviceMacAddress, settings.lastDeviceAddress.c_str()) != 0)
+                        continue;
+                    // Use the protocol that worked last time so we skip Auto's 10 s fallback wait.
+                    DEVICE_TYPE type = deviceType;
+                    if (type == DEVICE_TYPE_AUTO && settings.lastDeviceProtocol == 1) type = DEVICE_TYPE_V1;
+                    if (type == DEVICE_TYPE_AUTO && settings.lastDeviceProtocol == 2) type = DEVICE_TYPE_V2;
+                    MDR_LOG("[Client] Auto-connecting to {} ({})", device.szDeviceName, device.szDeviceMacAddress)
+                    const int res = StartConnection(clientPlatformConnectionGet(), device.szDeviceMacAddress,
+                                                    device.szDeviceName, usingBLE, type, true);
+                    connState = (res != MDR_RESULT_OK && res != MDR_RESULT_INPROGRESS)
+                        ? CONN_STATE_DISCONNECTED : CONN_STATE_CONNECTING;
+                    gNextAutoConnectMs = SDL_GetTicks() + kAutoConnectRetryMs;
+                    break;
+                }
+            }
+        }
         auto DrawDeviceList = [&]()
         {
             ImGui::SeparatorText("Available Devices");
+            if (!gLastDisconnectMessage.empty())
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                                      MaterialYouTheme::ArgbToImVec4(MaterialYouTheme::FixedSurfaceColors::error));
+                ImGui::TextWrapped(PSI_EXCLAMATION_SIGN " %s", gLastDisconnectMessage.c_str());
+                ImGui::PopStyleColor();
+            }
             std::span<MDRDeviceInfo> devices{pDeviceInfo, static_cast<size_t>(nDeviceInfo)};
             if (!devices.empty())
             {
@@ -1004,8 +1078,9 @@ void DrawDeviceDiscovery()
                     const mdr::String rowLabel = mdr::Format(PSI_LINK "  {}", device.szDeviceName);
                     if (ImGui::Button(rowLabel.c_str(), {ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight()}))
                     {
+                        gAutoConnectSuppressed = false;
                         const int res = StartConnection(clientPlatformConnectionGet(), device.szDeviceMacAddress,
-                                                        usingBLE, deviceType);
+                                                        device.szDeviceName, usingBLE, deviceType);
                         connState = (res != MDR_RESULT_OK && res != MDR_RESULT_INPROGRESS)
                             ? CONN_STATE_DISCONNECTED : CONN_STATE_CONNECTING;
                     }
@@ -1029,6 +1104,11 @@ void DrawDeviceDiscovery()
         }
         DrawDeviceList();
         ImGui::TextWrapped("Use Classic for most devices. Choose BLE (GATT) for LE Audio connections.");
+        if (ImGui::TreeNodeEx("App Settings"))
+        {
+            DrawAppSettings();
+            ImGui::TreePop();
+        }
         ImGui::Separator();
         ImGui::TextDisabled("SonyHeadphonesClient  /  %s", CLIENT_VERSION);
         if (ImGui::IsItemHovered())
@@ -1041,6 +1121,18 @@ void DrawDeviceDiscovery()
         ImGui::Separator();
         if (ImModalButton("Protocol Debugger"))
             gDebuggerOpen = true;
+        if (clientDebuggerHasPackets())
+        {
+            ImGui::BeginDisabled(clientDebuggerExportInProgress());
+            if (ImModalButton(PSI_SAVE " Export latest", 0, 2))
+                clientDebuggerExportLatestPacket();
+            if (ImModalButton(PSI_SAVE " Export ZIP", 1, 2))
+                clientDebuggerExportPacketCollection();
+            ImGui::EndDisabled();
+            const char* exportStatus = clientDebuggerGetExportStatus();
+            if (*exportStatus)
+                ImGui::TextWrapped("Packet export: %s", exportStatus);
+        }
 #endif
         ImGui::EndPopup();
     }
@@ -1095,6 +1187,17 @@ void DrawDeviceConnecting()
             DisconnectWithModal();
             return;
         }
+        {
+            // Remember what worked so the next launch (or the next time the link drops) reconnects by itself.
+            ClientSettings& settings = clientSettings();
+            settings.lastDeviceAddress = connectionAttempt.address;
+            if (!connectionAttempt.name.empty())
+                settings.lastDeviceName = connectionAttempt.name;
+            settings.lastDeviceBLE = connectionAttempt.ble;
+            settings.lastDeviceProtocol = ConnectionProtocolVersion() == MDR_PROTOCOL_V1 ? 1 : 2;
+            clientSettingsSave();
+            gLastDisconnectMessage.clear();
+        }
         clientPacketObserverAttach(gDevice);
         if (mdrHeadphonesRequestInit(gDevice) != MDR_RESULT_OK)
             DisconnectWithModal();
@@ -1110,7 +1213,9 @@ void DrawDeviceConnecting()
             if (ImGui::BeginPopupModal("Connection", nullptr, kImWindowFlagsTopMost))
             {
                 ImGui::NewLine();
-                ImTextCentered("Connecting...");
+                ImTextCentered(connectionAttempt.automatic ? "Reconnecting..." : "Connecting...");
+                if (!connectionAttempt.name.empty())
+                    ImTextCentered(connectionAttempt.name.c_str());
                 ImTextCentered(mdr::Format("Device type: {}", ConnectionAttemptName()).c_str());
                 ImGui::Dummy({0, 16.0f});
                 ImSpinner(1000.0f, 24.0f,
@@ -1121,6 +1226,7 @@ void DrawDeviceConnecting()
                 ImGui::NewLine();
                 if (ImModalButton(PSI_REMOVE " Cancel"))
                 {
+                    gAutoConnectSuppressed = true;
                     CloseDevice();
                     mdrConnectionDisconnect(conn);
                     connectionAttempt = {};
@@ -1156,6 +1262,7 @@ void DrawDeviceControlsHeader()
         {
             if (ImGui::MenuItem(PSI_UNLINK " Disconnect"))
             {
+                gAutoConnectSuppressed = true;
                 CloseDevice();
                 mdrConnectionDisconnect(conn);
                 connState = CONN_STATE_NO_CONNECTION;
@@ -1872,6 +1979,12 @@ void DrawDeviceControlsSystem()
         }
         ImGui::TreePop();
     }
+    /* App behaviour (this client, not the headphones) */
+    if (ImGui::TreeNodeEx("App Settings", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        DrawAppSettings();
+        ImGui::TreePop();
+    }
 }
 void DrawDeviceControlsAbout()
 {
@@ -2093,80 +2206,32 @@ void DrawDeviceControls()
 
 void DrawDeviceDisconnect()
 {
+    // The link dropped (headphones off, switched to another source, or an error). Instead of a
+    // modal, record why, return to discovery, and let auto-connect bring the device back.
     MDRConnection* conn = clientPlatformConnectionGet();
-    static bool popup = false;
-    if (!popup)
-    {
 #ifdef MDR_CLIENT_DEBUGGER
-        clientDebuggerClearExportStatus();
+    clientDebuggerClearExportStatus();
 #endif
-        MDR_LOG("[Client] Device disconnected")
-        if (!connectionAttempt.lastError.empty())
-            MDR_LOG("[Client] Connection: {}", connectionAttempt.lastError)
-        else if (conn)
-            MDR_LOG("[Client] Connection: {}", mdrConnectionGetLastError(conn))
-        if (!gHeadphonesError.empty())
-            MDR_LOG("[Client] Headphones: {}", gHeadphonesError)
-        ImGui::OpenPopup("Disconnected"), popup = true;
-    }
-    ImSetNextWindowCentered();
+    MDR_LOG("[Client] Device disconnected")
+    mdr::String reason;
+    if (!connectionAttempt.lastError.empty())
+        reason = connectionAttempt.lastError;
+    else if (conn && mdrConnectionGetLastError(conn) && *mdrConnectionGetLastError(conn))
+        reason = mdrConnectionGetLastError(conn);
+    if (!gHeadphonesError.empty())
+        reason = reason.empty() ? gHeadphonesError : reason + " / " + gHeadphonesError;
+    if (!reason.empty())
+        MDR_LOG("[Client] Reason: {}", reason)
+    gLastDisconnectMessage = reason.empty() ? "Connection lost. Waiting for the headphones to come back."
+        : mdr::Format("Connection lost: {}. Waiting for the headphones to come back.", reason);
 
-    if (ImGui::BeginPopupModal("Disconnected", nullptr, kImWindowFlagsTopMost))
-    {
-        ImGui::NewLine();
-        ImTextCentered("Device Disconnected");
-        ImGui::NewLine();
-        ImSpinner(5000.0f, 24.0f, MaterialYouTheme::ArgbToImU32(MaterialYouTheme::FixedSurfaceColors::error), 4.0f,
-                  true, false);
-        ImGui::NewLine();
-        ImGui::SeparatorText("Messages");
-        if (!connectionAttempt.lastError.empty())
-            ImGui::TextWrapped("Connection: %s", connectionAttempt.lastError.c_str());
-        else if (conn)
-            ImGui::TextWrapped("Connection: %s", mdrConnectionGetLastError(conn));
-        if (!gHeadphonesError.empty())
-            ImGui::TextWrapped("Headphones: %s", gHeadphonesError.c_str());
-#ifdef MDR_CLIENT_DEBUGGER
-        ImGui::Separator();
-        ImTextCentered(PSI_INFO_SIGN " NOTE: Use the Protocol Debugger for more info. This is available from the Device Selection menu");
-        const char* exportStatus = clientDebuggerGetExportStatus();
-        if (*exportStatus)
-            ImGui::TextWrapped("Packet export: %s", exportStatus);
-#endif
-        ImGui::NewLine();
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-        ImGui::BeginDisabled(
-#ifdef MDR_CLIENT_DEBUGGER
-            !clientDebuggerHasPackets() || clientDebuggerExportInProgress()
-#else
-            false
-#endif
-        );
-#ifdef MDR_CLIENT_DEBUGGER
-        if (ImModalButton(PSI_SAVE " Export latest", 0, 3))
-            clientDebuggerExportLatestPacket();
-        if (ImModalButton(PSI_SAVE " Export ZIP", 1, 3))
-            clientDebuggerExportPacketCollection();
-#endif
-        ImGui::EndDisabled();
-        if (ImModalButton(PSI_LINK " Reconnect",
-#ifdef MDR_CLIENT_DEBUGGER
-                          2, 3
-#else
-                          0, 1
-#endif
-                          ))
-        {
-            CloseDevice();
-            mdrConnectionDisconnect(conn);
-            connectionAttempt = {};
-            connState = CONN_STATE_NO_CONNECTION;
-        }
-
-        ImGui::EndPopup();
-    }
-    else
-        popup = false;
+    CloseDevice();
+    if (conn)
+        mdrConnectionDisconnect(conn);
+    connectionAttempt = {};
+    connState = CONN_STATE_NO_CONNECTION;
+    // Give the Bluetooth link a moment to settle before trying again.
+    gNextAutoConnectMs = SDL_GetTicks() + kReconnectGraceMs;
 }
 
 void DrawApp()

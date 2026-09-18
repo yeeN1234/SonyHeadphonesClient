@@ -20,6 +20,7 @@
 
 #include "Platform/Platform.hpp"
 #include "PayloadRecorder.hpp"
+#include "Settings.hpp"
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
@@ -36,9 +37,29 @@ extern void clientEnterDebuggerReplayMode();
 #endif
 
 bool gShouldClose = false;
+bool gTrayAvailable = false;
 
 SDL_Window* gWindow = nullptr;
 SDL_Renderer* gRenderer = nullptr;
+
+// Close button: hide to the tray when enabled and a tray icon exists, otherwise quit.
+static void HandleCloseRequested()
+{
+    ClientSettings& settings = clientSettings();
+    if (!(settings.closeToTray && gTrayAvailable))
+    {
+        gShouldClose = true;
+        return;
+    }
+    SDL_HideWindow(gWindow);
+    if (!settings.trayHintShown)
+    {
+        clientPlatformTrayNotify("SonyHeadphonesClient",
+                                 "Still running in the system tray. Left-click the icon to reopen, right-click for options.");
+        settings.trayHintShown = true;
+        clientSettingsSave();
+    }
+}
 
 void mainLoop()
 {
@@ -50,7 +71,7 @@ void mainLoop()
         if (event.type == SDL_EVENT_QUIT)
             gShouldClose = true;
         if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(gWindow))
-            gShouldClose = true;
+            HandleCloseRequested();
 #ifdef MDR_CLIENT_DEBUGGER
         if (event.type == SDL_EVENT_DROP_FILE && event.drop.windowID == SDL_GetWindowID(gWindow))
         {
@@ -70,7 +91,7 @@ void mainLoop()
     }
     // While minimized the frame is still built (so the device keeps being polled and tray
     // actions keep being applied), but nothing is rendered and the loop is throttled.
-    const bool minimized = (SDL_GetWindowFlags(gWindow) & SDL_WINDOW_MINIMIZED) != 0;
+    const bool minimized = (SDL_GetWindowFlags(gWindow) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN)) != 0;
     // Start the Dear ImGui frame
     {
         // Platform font loading - if available
@@ -151,15 +172,17 @@ namespace
         const char* recordDirectory{};
         const char* replayPath{};
         bool showHelp{};
+        bool startMinimized{};
     };
 
     void PrintUsage()
     {
         MDR_LOG(
-            "Usage: SonyHeadphonesClient [-con] [--record <capture-folder>]\n"
+            "Usage: SonyHeadphonesClient [-con] [--minimized] [--record <capture-folder>]\n"
             "       SonyHeadphonesClient [-con] [--replay <packet-file-or-folder>]\n"
             "\n"
             "-con opens a diagnostic console on Windows.\n"
+            "--minimized starts hidden in the system tray (used by launch-at-login).\n"
             "Packet replay requires a client build with the debugger enabled."
         );
     }
@@ -172,6 +195,11 @@ namespace
             if (std::strcmp(argument, "--help") == 0 || std::strcmp(argument, "-h") == 0)
             {
                 options.showHelp = true;
+                continue;
+            }
+            if (std::strcmp(argument, "--minimized") == 0)
+            {
+                options.startMinimized = true;
                 continue;
             }
             if (std::strcmp(argument, "-con") == 0)
@@ -241,6 +269,10 @@ int main(int argc, char** argv)
         MDR_LOG("SDL_Init Error: {}", SDL_GetError());
         return 1;
     }
+    clientSettingsLoad();
+    // Keep the launch-at-login registration pointing at this executable (it may have moved).
+    if (clientSettings().autoStart && clientPlatformAutoStartSupported())
+        clientPlatformAutoStartSet(1);
     if (options.recordDirectory)
     {
         if (!clientPayloadRecorderConfigure(options.recordDirectory))
@@ -265,13 +297,16 @@ int main(int argc, char** argv)
         MDR_LOG("Replayed {} packet(s) from {} in debugger-only mode.", replayed, options.replayPath);
     }
 #endif
+    // SDL turns a close request on the last window into SDL_EVENT_QUIT by default; we decide
+    // ourselves whether a close hides to the tray or quits (see HandleCloseRequested).
+    SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");
     // https://github.com/libsdl-org/SDL/blob/main/docs/README-highdpi.md#numeric-example
     // This should only be effective (!=1.0f) on Windows and X11 platforms
     float displayScale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
     gWindow = SDL_CreateWindow(
         "SonyHeadphonesClient",
         CLIENT_WINDOW_WIDTH * displayScale, CLIENT_WINDOW_HEIGHT * displayScale,
-        SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN
     );
     if (!gWindow)
     {
@@ -281,8 +316,12 @@ int main(int argc, char** argv)
 #ifdef MDR_CLIENT_DEBUGGER
     clientDebuggerSetWindow(gWindow);
 #endif
-    if (!clientPlatformTrayInit())
+    gTrayAvailable = clientPlatformTrayInit() != 0;
+    if (!gTrayAvailable)
         SDL_Log("System tray is not available on this platform");
+    // Created hidden so a --minimized launch never flashes a window.
+    if (!(options.startMinimized && gTrayAvailable))
+        SDL_ShowWindow(gWindow);
     gRenderer = SDL_CreateRenderer(gWindow, nullptr);
     SDL_SetRenderVSync(gRenderer, 1);
     if (!gRenderer)
