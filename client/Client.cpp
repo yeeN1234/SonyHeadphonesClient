@@ -955,11 +955,16 @@ void DrawDeviceDiscovery()
             }
         }
         ImGui::EndDisabled();
+        static uint64_t lastRefreshMs = 0;
         auto RefreshDeviceList = [&]()
         {
             MDRConnection* conn = clientPlatformConnectionGet();
-            if (conn) // TODO: Error modals
-                mdrConnectionGetDevicesList(conn, &pDeviceInfo, &nDeviceInfo);
+            if (!conn)
+                return;
+            if (pDeviceInfo)
+                mdrConnectionFreeDevicesList(conn, &pDeviceInfo), pDeviceInfo = nullptr, nDeviceInfo = 0;
+            mdrConnectionGetDevicesList(conn, &pDeviceInfo, &nDeviceInfo); // TODO: Error modals
+            lastRefreshMs = SDL_GetTicks();
         };
         if (needSwitchClientPlatform)
         {
@@ -974,29 +979,36 @@ void DrawDeviceDiscovery()
             connInitResult = clientPlatformConnectionInit(flags);
             RefreshDeviceList();
         }
+        // Devices that pair/connect after the app started should show up on their own. Enumeration
+        // does not issue a Bluetooth inquiry (it lists what the OS already knows), so polling is cheap.
+        constexpr uint64_t kAutoRefreshIntervalMs = 2000;
+        if (connInitResult == MDR_RESULT_OK && SDL_GetTicks() - lastRefreshMs >= kAutoRefreshIntervalMs)
+            RefreshDeviceList();
         auto DrawDeviceList = [&]()
         {
             ImGui::SeparatorText("Available Devices");
-            static int deviceIndex = 0;
             std::span<MDRDeviceInfo> devices{pDeviceInfo, static_cast<size_t>(nDeviceInfo)};
             if (!devices.empty())
             {
-                deviceIndex = std::clamp(deviceIndex, 0, static_cast<int>(devices.size()) - 1);
                 ImGui::BeginChild("##DiscoveredDevices", {0, ImGui::GetFrameHeightWithSpacing() * std::min(3, nDeviceInfo)},
                                   ImGuiChildFlags_None);
-                int btnIndex = 0;
                 for (const auto& device : devices)
                 {
                     ImGui::PushID(device.szDeviceMacAddress);
                     ImStylesRAII rowStyles;
                     rowStyles.PushVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
-                    rowStyles.PushCol(ImGuiCol_Button, ImGui::GetStyleColorVec4(
-                        deviceIndex == btnIndex ? ImGuiCol_Header : ImGuiCol_FrameBg));
+                    rowStyles.PushCol(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
                     rowStyles.PushCol(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
                     rowStyles.PushCol(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
-                    if (ImGui::Button(device.szDeviceName, {ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight()}))
-                        deviceIndex = btnIndex;
-                    ++btnIndex;
+                    // Clicking a device connects to it straight away.
+                    const mdr::String rowLabel = mdr::Format(PSI_LINK "  {}", device.szDeviceName);
+                    if (ImGui::Button(rowLabel.c_str(), {ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight()}))
+                    {
+                        const int res = StartConnection(clientPlatformConnectionGet(), device.szDeviceMacAddress,
+                                                        usingBLE, deviceType);
+                        connState = (res != MDR_RESULT_OK && res != MDR_RESULT_INPROGRESS)
+                            ? CONN_STATE_DISCONNECTED : CONN_STATE_CONNECTING;
+                    }
                     ImGui::PopID();
                 }
                 ImGui::EndChild();
@@ -1004,21 +1016,9 @@ void DrawDeviceDiscovery()
             else
             {
                 ImGui::TextUnformatted(PSI_BLUETOOTH " Ready when you are");
-                ImGui::TextWrapped("Turn on Bluetooth and connect your headphones in system settings, then refresh.");
+                ImGui::TextWrapped("Turn on Bluetooth and connect your headphones in system settings. They will appear here automatically.");
             }
-            ImGui::BeginDisabled(devices.empty());
-            if (ImModalButton(PSI_LINK " Connect", 0, 2))
-            {
-                const int res =
-                    StartConnection(clientPlatformConnectionGet(), devices[deviceIndex].szDeviceMacAddress,
-                                    usingBLE, deviceType);
-                if (res != MDR_RESULT_OK && res != MDR_RESULT_INPROGRESS)
-                    connState = CONN_STATE_DISCONNECTED;
-                else
-                    connState = CONN_STATE_CONNECTING;
-            }
-            ImGui::EndDisabled();
-            if (ImModalButton(PSI_REFRESH " Refresh", 1, 2))
+            if (ImModalButton(PSI_REFRESH " Refresh"))
                 RefreshDeviceList();
         };
         if (connInitResult != MDR_RESULT_OK && connInitResult != MDR_RESULT_INPROGRESS)
