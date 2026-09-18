@@ -1283,12 +1283,57 @@ void DrawDeviceControlsHeader()
     }
 }
 
+// The device reports volume as 0..30. Windows shows the AVRCP absolute volume (0..127) as a
+// percentage, so mirror that two-step rounding to display the same number the OS does.
+constexpr int kDeviceVolumeMax = 30;
+constexpr int kAvrcpVolumeMax = 127;
+
+int DeviceVolumeToPercent(int volume)
+{
+    const int avrcp = (volume * kAvrcpVolumeMax + kDeviceVolumeMax / 2) / kDeviceVolumeMax;
+    return (avrcp * 100 + kAvrcpVolumeMax / 2) / kAvrcpVolumeMax;
+}
+
 void DrawDeviceControlsPlayback()
 {
     ImGui::SeparatorText("Volume");
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    // Slider steps are the device's own 0..30 levels; the label adds the percentage Windows shows.
+    // "%%" because ImGui parses the slider label as a printf format string.
     int volume = gState.mPlayback.volume;
-    if (ImGui::SliderInt("##Volume", &volume, 0, 30))
+    const mdr::String label = mdr::Format("{}/{}  ({}%%)", volume, kDeviceVolumeMax, DeviceVolumeToPercent(volume));
+    bool changed = ImGui::SliderInt("##Volume", &volume, 0, kDeviceVolumeMax, label.c_str());
+    // Like the Windows volume flyout: mouse wheel while hovering, and Left/Right arrows while
+    // hovering or focused, step one device level. Owning the keys keeps the wheel from scrolling
+    // the surrounding panel and stops the arrows from moving keyboard focus elsewhere.
+    if (ImGui::IsItemHovered() || ImGui::IsItemFocused())
+    {
+        int step = 0;
+        // Wheel input can arrive as fractions of a notch spread over frames; accumulate so one
+        // notch is exactly one level.
+        static float wheelAccumulator = 0.0f;
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+            wheelAccumulator += ImGui::GetIO().MouseWheel;
+            const int notches = static_cast<int>(wheelAccumulator);
+            wheelAccumulator -= static_cast<float>(notches);
+            step += notches;
+        }
+        else
+            wheelAccumulator = 0.0f;
+        ImGui::SetItemKeyOwner(ImGuiKey_LeftArrow);
+        ImGui::SetItemKeyOwner(ImGuiKey_RightArrow);
+        step -= ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ? 1 : 0;
+        step += ImGui::IsKeyPressed(ImGuiKey_RightArrow) ? 1 : 0;
+        if (step != 0)
+        {
+            const int stepped = std::clamp(volume + step, 0, kDeviceVolumeMax);
+            if (stepped != volume)
+                volume = stepped, changed = true;
+        }
+    }
+    if (changed)
     {
         MDRPlayback playback = gState.mPlayback;
         playback.volume = static_cast<uint8_t>(volume);
