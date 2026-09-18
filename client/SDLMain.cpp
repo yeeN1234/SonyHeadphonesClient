@@ -9,6 +9,9 @@
 
 #include <mdr/Protocol.hpp>
 #include <imgui.h>
+#ifdef IMGUI_ENABLE_FREETYPE
+#include <misc/freetype/imgui_freetype.h>
+#endif
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_sdlrenderer3.h>
 #include <SDL3/SDL.h>
@@ -91,7 +94,12 @@ void mainLoop()
             if (const int size = clientPlatformLocateEmojiFontBinary(&fontData))
             {
                 SDL_Log("Loading platform emoji font of size %d bytes", size);
-                io.Fonts->AddFontFromMemoryTTF((void*)fontData, size, 15.0f, &merge_config);
+                ImFontConfig emoji_config = merge_config;
+#ifdef IMGUI_ENABLE_FREETYPE
+                // Composite COLR layers into colour bitmaps instead of the monochrome outline.
+                emoji_config.FontLoaderFlags |= ImGuiFreeTypeLoaderFlags_LoadColor;
+#endif
+                io.Fonts->AddFontFromMemoryTTF((void*)fontData, size, 15.0f, &emoji_config);
             }
         }
         // New frame

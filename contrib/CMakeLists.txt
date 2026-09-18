@@ -29,3 +29,12 @@ FetchContent_Declare(
         GIT_PROGRESS TRUE
 )
 
+# Font rasterizer for ImGui (misc/freetype). Needed for colour emoji, which stb_truetype cannot render.
+FetchContent_Declare(
+        freetype
+        GIT_REPOSITORY https://github.com/freetype/freetype.git
+        GIT_TAG VER-2-13-3
+        GIT_SHALLOW TRUE
+        GIT_PROGRESS TRUE
+)
+

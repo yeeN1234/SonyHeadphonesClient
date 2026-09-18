@@ -81,6 +81,24 @@ set(SDL_MISC OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(imgui)
 FetchContent_MakeAvailable(SDL3)
 
+# FreeType rasterizer: required for colour emoji (COLR layers), which stb_truetype cannot draw.
+# Off on the web build to keep the wasm small; those platforms fall back to stb_truetype.
+if (MDR_PLATFORM_OS STREQUAL "EMSCRIPTEN")
+    set(MDR_CLIENT_FREETYPE_DEFAULT OFF)
+else ()
+    set(MDR_CLIENT_FREETYPE_DEFAULT ON)
+endif ()
+option(MDR_CLIENT_FREETYPE "Rasterize ImGui fonts with FreeType (enables colour emoji)" ${MDR_CLIENT_FREETYPE_DEFAULT})
+if (MDR_CLIENT_FREETYPE)
+    set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+    set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(freetype)
+endif ()
+
 add_library(ImGuiSDL3 STATIC)
 target_sources(ImGuiSDL3 PRIVATE
         ${imgui_SOURCE_DIR}/imgui.cpp
@@ -89,15 +107,19 @@ target_sources(ImGuiSDL3 PRIVATE
         ${imgui_SOURCE_DIR}/imgui_widgets.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp
-
+        $<$<BOOL:${MDR_CLIENT_FREETYPE}>:${imgui_SOURCE_DIR}/misc/freetype/imgui_freetype.cpp>
 )
 target_compile_definitions(ImGuiSDL3 PUBLIC
     IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     # 32-bit ImWchar so codepoints above U+FFFF (emoji in track titles) survive text decoding
     IMGUI_USE_WCHAR32
+    $<$<BOOL:${MDR_CLIENT_FREETYPE}>:IMGUI_ENABLE_FREETYPE>
     $<$<NOT:$<CONFIG:Debug>>:IMGUI_DISABLE_DEMO_WINDOWS>
     $<$<NOT:$<CONFIG:Debug>>:IMGUI_DISABLE_DEBUG_TOOLS>
 )
+if (MDR_CLIENT_FREETYPE)
+    target_link_libraries(ImGuiSDL3 PUBLIC freetype)
+endif ()
 
 add_executable(ImGuiSDL3Example)
 target_sources(ImGuiSDL3Example PRIVATE
