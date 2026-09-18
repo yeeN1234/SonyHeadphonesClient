@@ -36,6 +36,8 @@ void clientPlatformDestroy()
     // TODO
 }
 
+int clientPlatformLocateEmojiFontBinary(const char** outData) { *outData = nullptr; return 0; }
+
 /* System tray is not implemented on this platform. */
 int clientPlatformTrayInit(void) { return 0; }
 void clientPlatformTrayUpdate(const ClientTrayStatus*) {}

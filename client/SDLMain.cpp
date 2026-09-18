@@ -72,20 +72,26 @@ void mainLoop()
     {
         // Platform font loading - if available
         // This is only done once per session. See @ref clientPlatformLocateFontBinary for more info.
-        static int platformFontSize = 0;
-        if (!platformFontSize)
+        static bool platformFontsMerged = false;
+        if (!platformFontsMerged)
         {
+            platformFontsMerged = true;
+            ImFontConfig merge_config{};
+            merge_config.MergeMode = true;
+            merge_config.FontDataOwnedByAtlas = false; // Platform keeps the buffers alive
+            // XXX: PlexSansIcon covered latin-1 pages. New ones won't overwrite them.
+            // External fonts are meant to cover missing glyphs e.g. CJK ones anyway - so this is fine.
+            // Order matters: glyph lookup falls through the merged fonts in the order they were added.
             const char* fontData = nullptr;
-            platformFontSize = clientPlatformLocateFontBinary(&fontData);
-            if (platformFontSize)
+            if (const int size = clientPlatformLocateFontBinary(&fontData))
             {
-                SDL_Log("Loading platform font of size %d bytes", platformFontSize);
-                ImFontConfig merge_config{};
-                merge_config.MergeMode = true;
-                merge_config.FontDataOwnedByAtlas = false; // Platform keeps the buffer alive
-                // XXX: PlexSansIcon covered latin-1 pages. New ones won't overwrite them.
-                // External fonts are meant to cover missing glyphs e.g. CJK ones anyway - so this is fine.
-                io.Fonts->AddFontFromMemoryTTF((void*)fontData, platformFontSize, 15.0f, &merge_config);
+                SDL_Log("Loading platform font of size %d bytes", size);
+                io.Fonts->AddFontFromMemoryTTF((void*)fontData, size, 15.0f, &merge_config);
+            }
+            if (const int size = clientPlatformLocateEmojiFontBinary(&fontData))
+            {
+                SDL_Log("Loading platform emoji font of size %d bytes", size);
+                io.Fonts->AddFontFromMemoryTTF((void*)fontData, size, 15.0f, &merge_config);
             }
         }
         // New frame

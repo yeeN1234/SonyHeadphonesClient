@@ -22,6 +22,11 @@ extern "C" {
      * @return Size of font data in bytes, 0 if not available - can be retried.
      */
     extern int clientPlatformLocateFontBinary(const char** outData);
+    /**
+     * @brief Locate a platform font with emoji glyph outlines (rendered monochrome).
+     * Same contract as clientPlatformLocateFontBinary.
+     */
+    extern int clientPlatformLocateEmojiFontBinary(const char** outData);
 #ifdef __EMSCRIPTEN__
     /**
      * @brief Download bytes through the browser.
