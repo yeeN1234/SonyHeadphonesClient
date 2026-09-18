@@ -62,6 +62,14 @@ extern "C" {
         int noiseMode;                  // ClientTrayNoiseMode
         int noiseCancellingAvailable;   // Non-zero when the device supports Noise Cancelling
         int ambientSoundAvailable;      // Non-zero when the device supports Ambient Sound
+        // Localized UI text (UTF-8), copied by the callee. NULL falls back to English.
+        const char* textNotConnected;
+        const char* textNoiseCancelling;
+        const char* textAmbientSound;
+        const char* textOff;
+        const char* textShowWindow;
+        const char* textExit;
+        const char* textCharging;
     } ClientTrayStatus;
     enum ClientTrayAction
     {

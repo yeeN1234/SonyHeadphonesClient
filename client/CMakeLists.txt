@@ -56,6 +56,7 @@ target_sources(
         PacketObserver.cpp
         PayloadRecorder.cpp
         Settings.cpp
+        Localization.cpp
         Fonts/PlexSansIcon.c
 )
 
@@ -76,7 +77,7 @@ set(SDL_SENSOR OFF CACHE BOOL "" FORCE)
 set(SDL_AUDIO OFF CACHE BOOL "" FORCE)
 set(SDL_POWER OFF CACHE BOOL "" FORCE)
 set(SDL_HIDAPI OFF CACHE BOOL "" FORCE)
-set(SDL_LOCALE OFF CACHE BOOL "" FORCE)
+set(SDL_LOCALE ON CACHE BOOL "" FORCE) # SDL_GetPreferredLocales for the "follow system" language option
 set(SDL_MISC OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(imgui)

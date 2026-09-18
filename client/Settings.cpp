@@ -30,6 +30,7 @@ namespace
         else if (key == "close_to_tray") gSettings.closeToTray = asBool();
         else if (key == "auto_start") gSettings.autoStart = asBool();
         else if (key == "tray_hint_shown") gSettings.trayHintShown = asBool();
+        else if (key == "language") gSettings.language = std::atoi(value.c_str());
     }
 }
 
@@ -84,6 +85,7 @@ void clientSettingsSave()
     out += std::string("close_to_tray=") + (gSettings.closeToTray ? "1" : "0") + "\n";
     out += std::string("auto_start=") + (gSettings.autoStart ? "1" : "0") + "\n";
     out += std::string("tray_hint_shown=") + (gSettings.trayHintShown ? "1" : "0") + "\n";
+    out += "language=" + std::to_string(gSettings.language) + "\n";
     if (!SDL_SaveFile(gSettingsPath.c_str(), out.data(), out.size()))
         SDL_Log("Unable to save settings to %s: %s", gSettingsPath.c_str(), SDL_GetError());
 }

@@ -48,7 +48,26 @@ namespace
         bool noiseCancellingAvailable = false;
         bool ambientSoundAvailable = false;
         wchar_t deviceName[128] = L"";
+        wchar_t textNotConnected[64] = L"Not connected";
+        wchar_t textNoiseCancelling[64] = L"&Noise Cancelling";
+        wchar_t textAmbientSound[64] = L"&Ambient Sound";
+        wchar_t textOff[64] = L"&Off";
+        wchar_t textShowWindow[64] = L"&Show Window";
+        wchar_t textExit[64] = L"E&xit";
+        wchar_t textCharging[64] = L"charging";
     } gStatus;
+
+    // UTF-8 -> UTF-16 into a fixed buffer; keeps the English default when `utf8` is NULL.
+    void CopyLabel(wchar_t* out, size_t capacity, const char* utf8, const wchar_t* fallback)
+    {
+        if (!utf8 || !*utf8)
+        {
+            wcsncpy_s(out, capacity, fallback, _TRUNCATE);
+            return;
+        }
+        if (MultiByteToWideChar(CP_UTF8, 0, utf8, -1, out, static_cast<int>(capacity)) <= 0)
+            wcsncpy_s(out, capacity, fallback, _TRUNCATE);
+    }
     // The status the current icon / tooltip were built from.
     int gIconPercent = INT_MIN;
     bool gIconConnected = false;
@@ -194,15 +213,16 @@ namespace
     {
         if (!gStatus.connected)
         {
-            std::swprintf(tip, capacity, L"SonyHeadphonesClient \u2014 Not connected");
+            std::swprintf(tip, capacity, L"SonyHeadphonesClient \u2014 %s", gStatus.textNotConnected);
             return;
         }
         const wchar_t* name = gStatus.deviceName[0] ? gStatus.deviceName : L"Headphones";
         if (gStatus.batteryPercent < 0)
             std::swprintf(tip, capacity, L"%s", name);
         else
-            std::swprintf(tip, capacity, L"%s \u2014 %d%%%s", name, gStatus.batteryPercent,
-                          gStatus.charging ? L" (charging)" : L"");
+            std::swprintf(tip, capacity, L"%s \u2014 %d%%%s%s%s", name, gStatus.batteryPercent,
+                          gStatus.charging ? L" (" : L"", gStatus.charging ? gStatus.textCharging : L"",
+                          gStatus.charging ? L")" : L"");
     }
 
     NOTIFYICONDATAW MakeNotifyData()
@@ -290,7 +310,7 @@ namespace
 
         wchar_t header[192];
         if (!gStatus.connected)
-            std::wcscpy(header, L"Not connected");
+            std::wcscpy(header, gStatus.textNotConnected);
         else if (gStatus.batteryPercent < 0)
             std::swprintf(header, 192, L"%s", gStatus.deviceName[0] ? gStatus.deviceName : L"Headphones");
         else
@@ -302,10 +322,10 @@ namespace
         const bool noiseUsable = gStatus.connected && gStatus.noiseMode != CLIENT_TRAY_NOISE_UNAVAILABLE;
         const UINT grayed = MF_STRING | MF_GRAYED;
         AppendMenuW(menu, noiseUsable && gStatus.noiseCancellingAvailable ? MF_STRING : grayed, kMenuNoiseCancelling,
-                    L"&Noise Cancelling");
+                    gStatus.textNoiseCancelling);
         AppendMenuW(menu, noiseUsable && gStatus.ambientSoundAvailable ? MF_STRING : grayed, kMenuAmbientSound,
-                    L"&Ambient Sound");
-        AppendMenuW(menu, noiseUsable ? MF_STRING : grayed, kMenuOff, L"&Off");
+                    gStatus.textAmbientSound);
+        AppendMenuW(menu, noiseUsable ? MF_STRING : grayed, kMenuOff, gStatus.textOff);
         if (noiseUsable)
         {
             UINT checked = kMenuOff;
@@ -316,8 +336,8 @@ namespace
             CheckMenuRadioItem(menu, kMenuNoiseCancelling, kMenuOff, checked, MF_BYCOMMAND);
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kMenuShowWindow, L"&Show Window");
-        AppendMenuW(menu, MF_STRING, kMenuExit, L"E&xit");
+        AppendMenuW(menu, MF_STRING, kMenuShowWindow, gStatus.textShowWindow);
+        AppendMenuW(menu, MF_STRING, kMenuExit, gStatus.textExit);
 
         // Required so the menu closes when the user clicks elsewhere (KB Q135788).
         SetForegroundWindow(gTrayWnd);
@@ -422,6 +442,20 @@ void clientPlatformTrayUpdate(const ClientTrayStatus* status)
     gStatus.noiseMode = status->connected ? status->noiseMode : CLIENT_TRAY_NOISE_UNAVAILABLE;
     gStatus.noiseCancellingAvailable = status->noiseCancellingAvailable != 0;
     gStatus.ambientSoundAvailable = status->ambientSoundAvailable != 0;
+    // Menu labels: keep an accelerator so keyboard users can still pick items.
+    auto label = [](wchar_t* out, size_t cap, const char* utf8, const wchar_t* fallback, const wchar_t* accel)
+    {
+        CopyLabel(out, cap, utf8, fallback);
+        if (utf8 && *utf8 && !wcschr(out, L'&') && accel)
+            wcsncat_s(out, cap, accel, _TRUNCATE); // e.g. "降噪 (&N)"
+    };
+    CopyLabel(gStatus.textNotConnected, 64, status->textNotConnected, L"Not connected");
+    label(gStatus.textNoiseCancelling, 64, status->textNoiseCancelling, L"&Noise Cancelling", L" (&N)");
+    label(gStatus.textAmbientSound, 64, status->textAmbientSound, L"&Ambient Sound", L" (&A)");
+    label(gStatus.textOff, 64, status->textOff, L"&Off", L" (&O)");
+    label(gStatus.textShowWindow, 64, status->textShowWindow, L"&Show Window", L" (&S)");
+    label(gStatus.textExit, 64, status->textExit, L"E&xit", L" (&X)");
+    CopyLabel(gStatus.textCharging, 64, status->textCharging, L"charging");
     if (status->deviceName && status->deviceName[0])
     {
         const int written = MultiByteToWideChar(CP_UTF8, 0, status->deviceName, -1, gStatus.deviceName,

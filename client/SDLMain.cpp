@@ -21,6 +21,7 @@
 #include "Platform/Platform.hpp"
 #include "PayloadRecorder.hpp"
 #include "Settings.hpp"
+#include "Localization.hpp"
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
@@ -55,7 +56,7 @@ static void HandleCloseRequested()
     if (!settings.trayHintShown)
     {
         clientPlatformTrayNotify("SonyHeadphonesClient",
-                                 "Still running in the system tray. Left-click the icon to reopen, right-click for options.");
+                                 tr("Still running in the system tray. Left-click the icon to reopen, right-click for options."));
         settings.trayHintShown = true;
         clientSettingsSave();
     }
@@ -270,6 +271,7 @@ int main(int argc, char** argv)
         return 1;
     }
     clientSettingsLoad();
+    clientLocalizationSetLanguage(static_cast<ClientLanguage>(clientSettings().language));
     // Keep the launch-at-login registration pointing at this executable (it may have moved).
     if (clientSettings().autoStart && clientPlatformAutoStartSupported())
         clientPlatformAutoStartSet(1);
