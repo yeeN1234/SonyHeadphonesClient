@@ -755,7 +755,10 @@ enum DEVICE_TYPE
 
 struct ConnectionAttemptState
 {
-    static constexpr uint64_t kAttemptTimeoutMs = 10'000;
+    // Longer than the Windows RFCOMM driver's own connect timeout (15 s). Abandoning a pending
+    // connect earlier leaves a half-open channel behind, and the next attempt then fails with
+    // "address in use" until the driver gives up on it, which cascades into endless failures.
+    static constexpr uint64_t kAttemptTimeoutMs = 20'000;
 
     std::string address;
     std::string name;      // Display name from discovery, remembered on success
@@ -775,6 +778,11 @@ bool gAutoConnectSuppressed = false;
 uint64_t gNextAutoConnectMs = 0;
 int gAutoConnectFailures = 0;       // Consecutive failed automatic attempts, drives the backoff
 bool gAutoConnectDeviceSeen = false; // Whether the remembered device was in the last scan
+// Bluetooth reset: offered after repeated silent failures, done automatically once per session.
+bool gBluetoothResetAutoDone = false;
+uint64_t gBluetoothResetStartedMs = 0;
+constexpr int kOfferResetAfterFailures = 2;
+constexpr int kAutoResetAfterFailures = 3;
 // Why the last session ended; formatted at draw time so it follows language switches.
 bool gHasDisconnectMessage = false;
 std::string gLastDisconnectReason;
@@ -923,6 +931,25 @@ void DrawListeningHero(const char* title, const char* subtitle)
 }
 
 // Compact language picker, used in App Settings and on the discovery screen footer.
+// A small rotating arc, drawn at `center`. Cheap enough to run every frame.
+void ImDrawSpinnerAt(ImVec2 center, float radius, ImU32 color, float thickness = 2.0f)
+{
+    const float angle = static_cast<float>(ImGui::GetTime()) * 6.0f;
+    auto* draw = ImGui::GetWindowDrawList();
+    draw->PathArcTo(center, radius, angle, angle + 4.4f, 24);
+    draw->PathStroke(color, 0, thickness);
+}
+
+// Inline spinner that occupies one frame height and advances the cursor like a widget.
+void ImInlineSpinner(ImU32 color)
+{
+    const float h = ImGui::GetFrameHeight();
+    const float radius = ImGui::GetFontSize() * 0.4f;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImDrawSpinnerAt(pos + ImVec2(radius + 2.0f, h * 0.5f), radius, color);
+    ImGui::Dummy(ImVec2(radius * 2.0f + 4.0f, h));
+}
+
 void DrawLanguageCombo(const char* id, float width)
 {
     ClientSettings& settings = clientSettings();
@@ -1070,8 +1097,17 @@ void DrawDeviceDiscovery()
         constexpr uint64_t kAutoRefreshIntervalMs = 2000;
         if (connInitResult == MDR_RESULT_OK && SDL_GetTicks() - lastRefreshMs >= kAutoRefreshIntervalMs)
             RefreshDeviceList();
+        // Bluetooth reset bookkeeping: while the radio is down, hold off; when it is back, retry at once.
+        static bool resetWasRunning = false;
+        const bool resetRunning = clientPlatformBluetoothResetInProgress() != 0;
+        if (resetWasRunning && !resetRunning)
+        {
+            gAutoConnectFailures = 0;
+            gNextAutoConnectMs = SDL_GetTicks() + kReconnectGraceMs;
+        }
+        resetWasRunning = resetRunning;
         // Auto-connect: the last successfully connected device shows up -> connect without a click.
-        if (!reconnecting)
+        if (!reconnecting && !resetRunning)
         {
             const ClientSettings& settings = clientSettings();
             const MDRDeviceInfo* remembered = nullptr;
@@ -1108,9 +1144,10 @@ void DrawDeviceDiscovery()
             ImGui::SeparatorText(tr("Available Devices"));
             if (reconnecting)
             {
+                ImInlineSpinner(ImGui::GetColorU32(ImGuiCol_CheckMark));
+                ImGui::SameLine();
                 ImGui::AlignTextToFramePadding();
-                ImGui::Text(tri(PSI_REFRESH, "Reconnecting to %s (%s)..."), connectionAttempt.name.c_str(),
-                            ConnectionAttemptName());
+                ImGui::Text(tr("Reconnecting to %s (%s)..."), connectionAttempt.name.c_str(), ConnectionAttemptName());
                 ImGui::SameLine();
                 if (ImGui::SmallButton(tr("Cancel")))
                 {
@@ -1132,12 +1169,40 @@ void DrawDeviceDiscovery()
                 ImGui::TextWrapped(tri(PSI_EXCLAMATION_SIGN, "%s"), message.c_str());
                 ImGui::PopStyleColor();
                 const uint64_t now = SDL_GetTicks();
-                if (gAutoConnectDeviceSeen && !gAutoConnectSuppressed && gNextAutoConnectMs > now)
+                if (clientPlatformBluetoothResetInProgress())
+                {
+                    ImInlineSpinner(ImGui::GetColorU32(ImGuiCol_CheckMark));
+                    ImGui::SameLine();
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted(tr("Resetting Bluetooth..."));
+                }
+                else if (gAutoConnectDeviceSeen && !gAutoConnectSuppressed && gNextAutoConnectMs > now)
                     ImGui::TextDisabled(tr("Retrying automatically in %llu s (attempt %d)."),
                                         static_cast<unsigned long long>((gNextAutoConnectMs - now + 999) / 1000),
                                         gAutoConnectFailures + 1);
                 else if (gAutoConnectSuppressed)
                     ImGui::TextDisabled(tr("Automatic reconnect paused. Click the device to connect."));
+                // The headphones are listed but never answer: a stuck link. Offer the fix, and do it
+                // once by ourselves after one more failure.
+                if (clientPlatformBluetoothResetSupported() && !clientPlatformBluetoothResetInProgress() &&
+                    gAutoConnectDeviceSeen && gAutoConnectFailures >= kOfferResetAfterFailures)
+                {
+                    if (!gBluetoothResetAutoDone && gAutoConnectFailures >= kAutoResetAfterFailures)
+                    {
+                        gBluetoothResetAutoDone = true;
+                        if (clientPlatformBluetoothResetStart())
+                            gBluetoothResetStartedMs = now;
+                    }
+                    ImGui::TextWrapped("%s", tr("The headphones are not answering on this link. Resetting Bluetooth usually fixes it; every Bluetooth device reconnects, which takes a few seconds."));
+                    if (ImGui::SmallButton(tri(PSI_BLUETOOTH, "Reset Bluetooth")))
+                        if (clientPlatformBluetoothResetStart())
+                            gBluetoothResetStartedMs = now;
+                    if (gBluetoothResetAutoDone)
+                    {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("%s", tr("Bluetooth was already reset once automatically."));
+                    }
+                }
             }
             ImGui::BeginDisabled(reconnecting);
             std::span<MDRDeviceInfo> devices{pDeviceInfo, static_cast<size_t>(nDeviceInfo)};
@@ -1173,8 +1238,23 @@ void DrawDeviceDiscovery()
                 ImGui::TextUnformatted(tri(PSI_BLUETOOTH, "Ready when you are"));
                 ImGui::TextWrapped(tr("Turn on Bluetooth and connect your headphones in system settings. They will appear here automatically."));
             }
-            if (ImModalButton(tri(PSI_REFRESH, "Refresh")))
+            // The scan itself is instant, so give the click a short, visible acknowledgement.
+            static uint64_t refreshFeedbackUntilMs = 0;
+            const bool refreshing = SDL_GetTicks() < refreshFeedbackUntilMs;
+            ImGui::BeginDisabled(refreshing);
+            if (ImModalButton(refreshing ? tri(PSI_REFRESH, "Refreshing...") : tri(PSI_REFRESH, "Refresh")))
+            {
                 RefreshDeviceList();
+                refreshFeedbackUntilMs = SDL_GetTicks() + 900;
+            }
+            ImGui::EndDisabled(); // refreshing
+            if (refreshing)
+            {
+                const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                const float radius = ImGui::GetFontSize() * 0.4f;
+                ImDrawSpinnerAt(ImVec2(min.x + (max.y - min.y) * 0.5f, (min.y + max.y) * 0.5f), radius,
+                                ImGui::GetColorU32(ImGuiCol_Text));
+            }
             ImGui::EndDisabled(); // reconnecting
         };
         if (connInitResult != MDR_RESULT_OK && connInitResult != MDR_RESULT_INPROGRESS)
@@ -2545,6 +2625,18 @@ namespace
     }
 }
 #pragma endregion
+
+// Close the headphone session the same way the Disconnect menu does. Exiting with only the
+// socket closed leaves the headphones holding a half-open session, and they then ignore the
+// next connection on that link until it times out.
+void clientShutdown()
+{
+    if (gDevice)
+        CloseDevice();
+    if (MDRConnection* conn = clientPlatformConnectionGet())
+        mdrConnectionDisconnect(conn);
+    connState = CONN_STATE_NO_CONNECTION;
+}
 
 bool clientShouldExit()
 {

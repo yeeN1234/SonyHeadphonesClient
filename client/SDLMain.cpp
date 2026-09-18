@@ -33,6 +33,7 @@
 #endif
 // Implemented by Client.cpp
 extern bool clientShouldExit();
+extern void clientShutdown();
 #ifdef MDR_CLIENT_DEBUGGER
 extern void clientEnterDebuggerReplayMode();
 #endif
@@ -108,6 +109,12 @@ void mainLoop()
             // External fonts are meant to cover missing glyphs e.g. CJK ones anyway - so this is fine.
             // Order matters: glyph lookup falls through the merged fonts in the order they were added.
             const char* fontData = nullptr;
+            // Latin Extended / Greek / Cyrillic first: the CJK fonts carry only a partial Latin set.
+            if (const int size = clientPlatformLocateLatinFontBinary(&fontData))
+            {
+                SDL_Log("Loading platform Latin font of size %d bytes", size);
+                io.Fonts->AddFontFromMemoryTTF((void*)fontData, size, 15.0f, &merge_config);
+            }
             if (const int size = clientPlatformLocateFontBinary(&fontData))
             {
                 SDL_Log("Loading platform font of size %d bytes", size);
@@ -390,6 +397,7 @@ int main(int argc, char** argv)
 
     // Cleanup
     {
+        clientShutdown(); // Close the headphone session before anything else goes away
         ImGui_ImplSDLRenderer3_Shutdown();
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();

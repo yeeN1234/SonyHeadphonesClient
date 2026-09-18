@@ -400,6 +400,13 @@ namespace
             RefreshIcon();
             return 0;
         }
+        if (msg == WM_CLOSE)
+        {
+            // Lets tooling (or a future updater) ask the app to quit cleanly instead of killing it,
+            // which would leave the headphones holding a half-open MDR session for a while.
+            PushEvent(CLIENT_TRAY_ACTION_EXIT);
+            return 0;
+        }
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 }

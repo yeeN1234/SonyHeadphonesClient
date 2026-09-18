@@ -71,6 +71,22 @@ int clientPlatformLocateFontBinary(const char** outData)
     return size;
 }
 
+// Latin Extended / Greek / Cyrillic: Segoe UI. Semibold matches the bundled font's weight.
+int clientPlatformLocateLatinFontBinary(const char** outData)
+{
+    static const wchar_t* const kCandidates[] = {
+        L"\\Fonts\\seguisb.ttf",  // Segoe UI Semibold
+        L"\\Fonts\\segoeuib.ttf", // Segoe UI Bold
+        L"\\Fonts\\segoeui.ttf",  // Segoe UI
+    };
+    static const char* data = nullptr;
+    static int size = -1;
+    if (size < 0)
+        size = LoadFirstSystemFont(kCandidates, sizeof(kCandidates) / sizeof(kCandidates[0]), &data);
+    *outData = data;
+    return size;
+}
+
 // Emoji: Segoe UI Emoji ships monochrome outlines alongside its colour layers, which is what
 // ImGui's rasterizer can use. Segoe UI Symbol is the pre-Windows 8.1 fallback.
 int clientPlatformLocateEmojiFontBinary(const char** outData)

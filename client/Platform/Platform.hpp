@@ -27,6 +27,11 @@ extern "C" {
      * Same contract as clientPlatformLocateFontBinary.
      */
     extern int clientPlatformLocateEmojiFontBinary(const char** outData);
+    /**
+     * @brief Locate a platform font covering Latin Extended, Greek and Cyrillic (romanised
+     * track titles such as "Kibō"). Same contract as clientPlatformLocateFontBinary.
+     */
+    extern int clientPlatformLocateLatinFontBinary(const char** outData);
 #ifdef __EMSCRIPTEN__
     /**
      * @brief Download bytes through the browser.
@@ -107,6 +112,19 @@ extern "C" {
      * @brief Show a transient notification anchored to the tray icon (no-op where unsupported).
      */
     extern void clientPlatformTrayNotify(const char* title, const char* message);
+
+    /* ---- Bluetooth radio reset ------------------------------------------------------------------ */
+    /** @return Non-zero when this platform can power-cycle the Bluetooth radio from the app. */
+    extern int clientPlatformBluetoothResetSupported(void);
+    /**
+     * @brief Switch the Bluetooth radio off and back on, asynchronously. Every Bluetooth device
+     * drops for a few seconds and reconnects on its own. Used to recover a link on which the
+     * headphones have stopped answering.
+     * @return Non-zero when the reset was started (zero if unsupported or already running).
+     */
+    extern int clientPlatformBluetoothResetStart(void);
+    /** @return Non-zero while a reset started by clientPlatformBluetoothResetStart is running. */
+    extern int clientPlatformBluetoothResetInProgress(void);
 
     /* ---- Launch at login ---------------------------------------------------------------------- */
     /** @return Non-zero when this platform can register the app to start at login. */
