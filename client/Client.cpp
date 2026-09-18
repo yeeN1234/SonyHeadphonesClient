@@ -1955,7 +1955,9 @@ void DrawDeviceControlsTabs()
     }
 }
 
-void DrawDeviceControls()
+// Pump one device event. Runs every frame while connected, independent of whether the
+// main window is visible, so background tray actions and battery updates keep flowing.
+void PollDevice()
 {
     MDREvent event = MDR_EVENT_NONE;
     const MDRResult pollResult = mdrHeadphonesPoll(gDevice, &event);
@@ -2016,7 +2018,24 @@ void DrawDeviceControls()
         gState.mPendingSync = true;
         break;
     }
+}
 
+// Flush staged settings. Counterpart of PollDevice, also independent of window visibility.
+void CommitDevice()
+{
+    if (!gDevice || !mdrHeadphonesIsReady(gDevice))
+        return;
+    if (mdrHeadphonesIsDirty(gDevice) && mdrHeadphonesRequestCommit(gDevice) != MDR_RESULT_OK)
+        DisconnectWithModal();
+    if (gState.mPendingSync){
+        gState.mPendingSync = false;
+        if (mdrHeadphonesRequestSync(gDevice) != MDR_RESULT_OK)
+            DisconnectWithModal();
+    }
+}
+
+void DrawDeviceControls()
+{
     DrawDeviceControlsHeader();
     if (!gDevice)
         return;
@@ -2025,17 +2044,6 @@ void DrawDeviceControls()
     DrawDeviceControlsTabs();
     ImScrollWhenDraggingAnywhere(ImGui::GetIO().MouseDelta, ImGuiMouseButton_Left);
     ImGui::EndChild();
-
-    if (mdrHeadphonesIsReady(gDevice))
-    {
-        if (mdrHeadphonesIsDirty(gDevice) && mdrHeadphonesRequestCommit(gDevice) != MDR_RESULT_OK)
-            DisconnectWithModal();
-        if (gState.mPendingSync){
-            gState.mPendingSync = false;
-            if (mdrHeadphonesRequestSync(gDevice) != MDR_RESULT_OK)
-                DisconnectWithModal();
-        }
-    }
 }
 
 void DrawDeviceDisconnect()
@@ -2134,6 +2142,8 @@ void DrawApp()
         return;
     }
 #endif
+    if (connState == CONN_STATE_CONNECTED && gDevice)
+        PollDevice();
     ImGui::SetNextWindowPos({0, 0});
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGuiWindowFlags flags = kImWindowFlagsTopMost;
@@ -2167,6 +2177,8 @@ void DrawApp()
         }
     }
     ImGui::End();
+    if (connState == CONN_STATE_CONNECTED && gDevice)
+        CommitDevice();
 #ifdef MDR_CLIENT_DEBUGGER
     // Error modals replace the debugger popup while preserving its open state.
     // Once the error is dismissed, the debugger reopens with its packet history intact.
@@ -2188,11 +2200,143 @@ void clientEnterDebuggerReplayMode()
 }
 #endif
 
+#pragma region System Tray
+extern SDL_Window* gWindow; // SDLMain.cpp
+
+namespace
+{
+    // Battery shown in the tray: the main battery when reported, otherwise the lower earbud.
+    // Mirrors the header card filter (present + threshold) so both show the same numbers.
+    const MDRBattery* TrayBattery()
+    {
+        const MDRBattery* main = nullptr;
+        const MDRBattery* bud = nullptr;
+        for (const MDRBattery& battery : gState.mBatteries)
+        {
+            if (!battery.present || !battery.update_threshold_percent)
+                continue;
+            if (battery.part == MDR_BATTERY_MAIN)
+                main = &battery;
+            else if (battery.part == MDR_BATTERY_LEFT || battery.part == MDR_BATTERY_RIGHT)
+                if (!bud || battery.level_percent < bud->level_percent)
+                    bud = &battery;
+        }
+        return main ? main : bud;
+    }
+
+    int TrayNoiseMode()
+    {
+        if (!gState.mNoiseAvailable)
+            return CLIENT_TRAY_NOISE_UNAVAILABLE;
+        if (gState.mNoise.mode == MDR_NOISE_MODE_OFF)
+            return CLIENT_TRAY_NOISE_OFF;
+        if (ConnectionProtocolVersion() == MDR_PROTOCOL_V1)
+        {
+            // V1: mode is just on/off; ambient_level -1 means Noise Cancelling, 0..20 the ambient family.
+            return static_cast<int8_t>(gState.mNoise.ambient_level) == -1
+                ? CLIENT_TRAY_NOISE_CANCELLING : CLIENT_TRAY_NOISE_AMBIENT;
+        }
+        return gState.mNoise.mode == MDR_NOISE_MODE_AMBIENT ? CLIENT_TRAY_NOISE_AMBIENT : CLIENT_TRAY_NOISE_CANCELLING;
+    }
+
+    // Same mutations as the radio buttons in DrawDeviceControlsSound; CommitDevice flushes them.
+    void ApplyTrayNoiseMode(int mode)
+    {
+        if (connState != CONN_STATE_CONNECTED || !gDevice || !gState.mNoiseAvailable)
+            return;
+        const bool v1 = ConnectionProtocolVersion() == MDR_PROTOCOL_V1;
+        switch (mode)
+        {
+        case CLIENT_TRAY_NOISE_CANCELLING:
+            if (!FeatureAvailable(MDR_FEATURE_NOISE_CANCELLING))
+                return;
+            if (v1)
+            {
+                gState.mNoise.mode = MDR_NOISE_MODE_V1_ON;
+                gState.mNoise.ambient_level = static_cast<uint8_t>(-1);
+            }
+            else
+                gState.mNoise.mode = MDR_NOISE_MODE_CANCELLING;
+            break;
+        case CLIENT_TRAY_NOISE_AMBIENT:
+            if (!FeatureAvailable(MDR_FEATURE_AMBIENT_SOUND))
+                return;
+            if (v1)
+            {
+                gState.mNoise.mode = MDR_NOISE_MODE_V1_ON;
+                if (static_cast<int8_t>(gState.mNoise.ambient_level) < 1)
+                    gState.mNoise.ambient_level = 20;
+            }
+            else
+            {
+                gState.mNoise.mode = MDR_NOISE_MODE_AMBIENT;
+                if (gState.mNoise.ambient_level == 0)
+                    gState.mNoise.ambient_level = 20;
+            }
+            break;
+        case CLIENT_TRAY_NOISE_OFF:
+            gState.mNoise.mode = MDR_NOISE_MODE_OFF;
+            break;
+        default:
+            return;
+        }
+        gState.mNoise.changing_asm_level = MDR_FALSE;
+        mdrHeadphonesSetNoiseControl(gDevice, &gState.mNoise);
+    }
+
+    void ProcessTrayEvents(bool& exitRequested)
+    {
+        ClientTrayEvent event{};
+        while (clientPlatformTrayPollEvent(&event))
+        {
+            switch (event.action)
+            {
+            case CLIENT_TRAY_ACTION_SHOW_WINDOW:
+                if (gWindow)
+                {
+                    SDL_ShowWindow(gWindow);
+                    SDL_RestoreWindow(gWindow);
+                    SDL_RaiseWindow(gWindow);
+                }
+                break;
+            case CLIENT_TRAY_ACTION_EXIT:
+                exitRequested = true;
+                break;
+            case CLIENT_TRAY_ACTION_SET_NOISE_MODE:
+                ApplyTrayNoiseMode(event.noiseMode);
+                break;
+            default:
+                break;
+            }
+        }
+    }
+
+    void SyncTray()
+    {
+        const bool connected = connState == CONN_STATE_CONNECTED && gDevice != nullptr;
+        const mdr::String name = connected ? GetText(MDR_TEXT_MODEL_NAME) : mdr::String{};
+        const MDRBattery* battery = connected ? TrayBattery() : nullptr;
+        ClientTrayStatus status{};
+        status.connected = connected;
+        status.deviceName = name.empty() ? nullptr : name.c_str();
+        status.batteryPercent = battery ? battery->level_percent : -1;
+        status.charging = battery && battery->charging == MDR_CHARGING_YES;
+        status.noiseMode = connected ? TrayNoiseMode() : CLIENT_TRAY_NOISE_UNAVAILABLE;
+        status.noiseCancellingAvailable = connected && FeatureAvailable(MDR_FEATURE_NOISE_CANCELLING);
+        status.ambientSoundAvailable = connected && FeatureAvailable(MDR_FEATURE_AMBIENT_SOUND);
+        clientPlatformTrayUpdate(&status);
+    }
+}
+#pragma endregion
+
 bool clientShouldExit()
 {
     // Defines like IMGUI_DISABLE_OBSOLETE_FUNCTIONS changes ImGui struct sizes
     // and can lead to very, very bad results. Check them here too to ensure than this TU got the correct ones.
     IMGUI_CHECKVERSION();
+    bool exitRequested = false;
+    ProcessTrayEvents(exitRequested); // Before DrawApp so a staged mode change commits this frame
     DrawApp();
-    return false;
+    SyncTray();
+    return exitRequested;
 }

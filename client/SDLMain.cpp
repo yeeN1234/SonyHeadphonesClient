@@ -65,11 +65,9 @@ void mainLoop()
         }
 #endif
     }
-    if (SDL_GetWindowFlags(gWindow) & SDL_WINDOW_MINIMIZED)
-    {
-        SDL_Delay(10);
-        return;
-    }
+    // While minimized the frame is still built (so the device keeps being polled and tray
+    // actions keep being applied), but nothing is rendered and the loop is throttled.
+    const bool minimized = (SDL_GetWindowFlags(gWindow) & SDL_WINDOW_MINIMIZED) != 0;
     // Start the Dear ImGui frame
     {
         // Platform font loading - if available
@@ -95,9 +93,14 @@ void mainLoop()
         ImGui::NewFrame();
     }    
     gShouldClose |= clientShouldExit();
+    ImGui::Render();
+    if (minimized)
+    {
+        SDL_Delay(50);
+        return;
+    }
     // Rendering
     {
-        ImGui::Render();
         SDL_SetRenderScale(gRenderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 0);
         SDL_RenderClear(gRenderer);
@@ -263,6 +266,8 @@ int main(int argc, char** argv)
 #ifdef MDR_CLIENT_DEBUGGER
     clientDebuggerSetWindow(gWindow);
 #endif
+    if (!clientPlatformTrayInit())
+        SDL_Log("System tray is not available on this platform");
     gRenderer = SDL_CreateRenderer(gWindow, nullptr);
     SDL_SetRenderVSync(gRenderer, 1);
     if (!gRenderer)

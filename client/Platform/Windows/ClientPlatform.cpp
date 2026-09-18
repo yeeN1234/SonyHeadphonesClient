@@ -2,6 +2,7 @@
 #include <new>
 #include <mdr/Protocol.hpp>
 #include <mdr-bt/ConnectionWindows.h>
+#include "../Platform.hpp"
 
 extern "C" {
 int clientPlatformLocateFontBinary(const char** outData)
@@ -62,7 +63,7 @@ MDRConnection* clientPlatformConnectionGet()
 
 void clientPlatformDestroy()
 {
+    clientPlatformTrayDestroy();
     clientPlatformConnectionDestroy();
-    // TODO
 }
 }

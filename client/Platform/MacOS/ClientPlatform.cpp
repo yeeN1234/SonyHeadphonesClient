@@ -1,3 +1,4 @@
+#include "../Platform.hpp"
 #include <mdr-bt/ConnectionMacOS.h>
 
 extern "C" {
@@ -33,4 +34,10 @@ void clientPlatformDestroy()
     clientPlatformConnectionDestroy();
     // TODO
 }
+
+/* System tray is not implemented on this platform. */
+int clientPlatformTrayInit(void) { return 0; }
+void clientPlatformTrayUpdate(const ClientTrayStatus*) {}
+int clientPlatformTrayPollEvent(ClientTrayEvent*) { return 0; }
+void clientPlatformTrayDestroy(void) {}
 }
