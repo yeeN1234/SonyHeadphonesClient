@@ -82,6 +82,7 @@ void mainLoop()
                 SDL_Log("Loading platform font of size %d bytes", platformFontSize);
                 ImFontConfig merge_config{};
                 merge_config.MergeMode = true;
+                merge_config.FontDataOwnedByAtlas = false; // Platform keeps the buffer alive
                 // XXX: PlexSansIcon covered latin-1 pages. New ones won't overwrite them.
                 // External fonts are meant to cover missing glyphs e.g. CJK ones anyway - so this is fine.
                 io.Fonts->AddFontFromMemoryTTF((void*)fontData, platformFontSize, 15.0f, &merge_config);
