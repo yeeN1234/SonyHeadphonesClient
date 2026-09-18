@@ -175,3 +175,7 @@ target_compile_definitions(SonyHeadphonesClient PRIVATE
     -DMDR_PLATFORM_OS="${MDR_PLATFORM_OS}"
     -DMDR_PLATFORM_PROCESSOR="${CMAKE_SYSTEM_PROCESSOR}"
 )
+
+if (WIN32)
+    target_link_libraries(SonyHeadphonesClient PRIVATE dwmapi)
+endif ()

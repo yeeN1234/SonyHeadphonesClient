@@ -7,6 +7,9 @@ namespace MaterialYouTheme {
 
 using Argb = uint32_t;
 
+// Set only after the native compositor accepts the acrylic backdrop.
+inline bool glassEnabled = false;
+
 inline ImVec4 ArgbToImVec4(Argb argb) {
     return ImVec4(
         static_cast<float>((argb >> 16) & 0xFF) / 255.0f,
@@ -33,19 +36,19 @@ inline ImU32 ArgbToImU32(Argb argb, float alpha) {
     return ImGui::ColorConvertFloat4ToU32(ArgbToImVec4(argb, alpha));
 }
 
-// Sony's fixed dark surface values (from Sound Connect APK ir/b.smali)
+// Neutral light surfaces for the personal-audio interface.
 struct FixedSurfaceColors {
-    static constexpr Argb surface             = 0xFF191C1D;
-    static constexpr Argb surfaceContainerLow = 0xFF1C2021;
-    static constexpr Argb surfaceContainerHigh = 0xFF282D2F;
-    static constexpr Argb surfaceContainerHighest = 0xFF36393A;
-    static constexpr Argb onSurface           = 0xFFE1E3E3;
-    static constexpr Argb onSurfaceVariant    = 0xFFC4C7C7;
-    static constexpr Argb outline             = 0xFF8E9192;
-    static constexpr Argb outlineVariant      = 0xFF444748;
-    static constexpr Argb inverseSurface      = 0xFFE1E3E3;
-    static constexpr Argb inverseOnSurface    = 0xFF2E3132;
-    static constexpr Argb error               = 0xFFF2B8B5;
+    static constexpr Argb surface             = 0xFFF5F5F7;
+    static constexpr Argb surfaceContainerLow = 0xFFFFFFFF;
+    static constexpr Argb surfaceContainerHigh = 0xFFF0F0F3;
+    static constexpr Argb surfaceContainerHighest = 0xFFE5E5EA;
+    static constexpr Argb onSurface           = 0xFF1D1D1F;
+    static constexpr Argb onSurfaceVariant    = 0xFF636366;
+    static constexpr Argb outline             = 0xFF8E8E93;
+    static constexpr Argb outlineVariant      = 0xFFD1D1D6;
+    static constexpr Argb inverseSurface      = 0xFF1D1D1F;
+    static constexpr Argb inverseOnSurface    = 0xFFF5F5F7;
+    static constexpr Argb error               = 0xFFB42318;
     static constexpr Argb errorContainer      = 0xFF8C1D18;
 };
 
@@ -65,14 +68,16 @@ inline const Theme& ThemeForModelColor(uint8_t modelColor) {
     return kThemeTable[0]; // DEFAULT
 }
 
-inline void Apply(const Theme& theme) {
+inline void Apply(const Theme&) {
+    // Keep controls consistently blue; dark model palettes are unsuitable on white surfaces.
+    const Theme theme{0xFF0071E3, 0xFFFFFFFF, 0xFFE5F0FF, 0xFF003366};
     auto& style = ImGui::GetStyle();
     ImVec4* c = style.Colors;
 
     // Fixed surface colors (Sony standard)
-    c[ImGuiCol_WindowBg]        = ArgbToImVec4(FixedSurfaceColors::surface);
+    c[ImGuiCol_WindowBg]        = ArgbToImVec4(FixedSurfaceColors::surface, glassEnabled ? 0.35f : 1.0f);
     c[ImGuiCol_ChildBg]         = ArgbToImVec4(FixedSurfaceColors::surface, 0.0f);
-    c[ImGuiCol_PopupBg]         = ArgbToImVec4(FixedSurfaceColors::surfaceContainerLow);
+    c[ImGuiCol_PopupBg]         = ArgbToImVec4(FixedSurfaceColors::surfaceContainerLow, glassEnabled ? 0.82f : 1.0f);
     c[ImGuiCol_MenuBarBg]       = ArgbToImVec4(FixedSurfaceColors::surfaceContainerHigh);
     c[ImGuiCol_ScrollbarBg]     = ArgbToImVec4(FixedSurfaceColors::surface, 0.5f);
     c[ImGuiCol_TableRowBg]      = ArgbToImVec4(FixedSurfaceColors::surface, 0.0f);
@@ -113,9 +118,9 @@ inline void Apply(const Theme& theme) {
     c[ImGuiCol_SliderGrabActive] = ArgbToImVec4(theme.primary);
 
     // Buttons: primary tint, brighter on hover/active
-    c[ImGuiCol_Button]           = ArgbToImVec4(theme.primary, 0.25f);
-    c[ImGuiCol_ButtonHovered]    = ArgbToImVec4(theme.primary, 0.36f);
-    c[ImGuiCol_ButtonActive]     = ArgbToImVec4(theme.primary, 0.45f);
+    c[ImGuiCol_Button]           = ArgbToImVec4(theme.primary, 0.10f);
+    c[ImGuiCol_ButtonHovered]    = ArgbToImVec4(theme.primary, 0.17f);
+    c[ImGuiCol_ButtonActive]     = ArgbToImVec4(theme.primary, 0.24f);
 
     // Headers: primary tint with increasing opacity
     c[ImGuiCol_Header]           = ArgbToImVec4(theme.primary, 0.22f);
@@ -149,7 +154,7 @@ inline void Apply(const Theme& theme) {
     c[ImGuiCol_PlotHistogramHovered] = ArgbToImVec4(theme.primary);
 
     // Modal dim
-    c[ImGuiCol_ModalWindowDimBg]      = ImVec4(0, 0, 0, 0.5f);
+    c[ImGuiCol_ModalWindowDimBg]      = ImVec4(0.12f, 0.14f, 0.18f, 0.16f);
     c[ImGuiCol_NavWindowingHighlight] = ArgbToImVec4(theme.primary, 0.7f);
     c[ImGuiCol_NavWindowingDimBg]     = ImVec4(0, 0, 0, 0.2f);
 

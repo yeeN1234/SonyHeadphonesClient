@@ -51,17 +51,17 @@ int clientPlatformLocateFontBinary(const char** outData)
 {
     // Preference order: Traditional Chinese, Simplified Chinese, Japanese, Korean.
     // Each of these also covers the CJK Unified Ideographs, so the first present wins.
-    // Bold faces first: the bundled Latin font is a medium weight, and regular CJK strokes
-    // look thin and washed out next to it.
+    // Regular faces keep dense Chinese strokes open at small UI sizes.
+    // Bold faces remain fallbacks for systems with a reduced font installation.
     static const wchar_t* const kCandidates[] = {
-        L"\\Fonts\\msjhbd.ttc",   // Microsoft JhengHei Bold
         L"\\Fonts\\msjh.ttc",     // Microsoft JhengHei
-        L"\\Fonts\\msyhbd.ttc",   // Microsoft YaHei Bold
+        L"\\Fonts\\msjhbd.ttc",   // Microsoft JhengHei Bold
         L"\\Fonts\\msyh.ttc",     // Microsoft YaHei
-        L"\\Fonts\\meiryob.ttc",  // Meiryo Bold
+        L"\\Fonts\\msyhbd.ttc",   // Microsoft YaHei Bold
         L"\\Fonts\\meiryo.ttc",   // Meiryo
-        L"\\Fonts\\malgunbd.ttf", // Malgun Gothic Bold
+        L"\\Fonts\\meiryob.ttc",  // Meiryo Bold
         L"\\Fonts\\malgun.ttf",   // Malgun Gothic
+        L"\\Fonts\\malgunbd.ttf", // Malgun Gothic Bold
     };
     static const char* data = nullptr;
     static int size = -1;

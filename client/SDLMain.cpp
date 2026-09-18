@@ -5,6 +5,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <dwmapi.h>
 #endif
 
 #include <mdr/Protocol.hpp>
@@ -63,12 +64,146 @@ static void HandleCloseRequested()
     }
 }
 
+#ifdef _WIN32
+static bool ConfigureGlassWindow()
+{
+    HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(SDL_GetWindowProperties(gWindow),
+                                                        SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+    if (!hwnd) return false;
+    // Extending DWM glass can resurrect native caption buttons on SDL's borderless window.
+    // Our SDL controls already provide these actions, so suppress the native system menu.
+    SetWindowLongPtrW(hwnd, GWL_STYLE, GetWindowLongPtrW(hwnd, GWL_STYLE) & ~WS_SYSMENU);
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    // Numeric attribute values keep compilation compatible with older Windows SDKs.
+    const DWORD round = 2; // DWMWCP_ROUND
+    DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &round, sizeof(round));
+    const DWORD acrylic = 3; // DWMSBT_TRANSIENTWINDOW (Windows 11 22H2+)
+    const HRESULT result = DwmSetWindowAttribute(hwnd, 38 /* DWMWA_SYSTEMBACKDROP_TYPE */,
+                                                &acrylic, sizeof(acrylic));
+    if (FAILED(result))
+    {
+        SDL_Log("Acrylic backdrop unavailable; using opaque surfaces (0x%lx)", static_cast<unsigned long>(result));
+        return false;
+    }
+    const MARGINS margins{-1, -1, -1, -1};
+    return SUCCEEDED(DwmExtendFrameIntoClientArea(hwnd, &margins));
+}
+#endif
+
+// Custom Windows chrome uses SDL hit testing so dragging/resizing remains native.
+float clientWindowChromeHeight()
+{
+#ifdef _WIN32
+    return (SDL_GetWindowFlags(gWindow) & SDL_WINDOW_BORDERLESS)
+        ? 36.0f * SDL_GetWindowDisplayScale(gWindow) : 0.0f;
+#else
+    return 0.0f;
+#endif
+}
+
+#ifdef _WIN32
+static int ChromeButton(float x, float y)
+{
+    int width = 0;
+    SDL_GetWindowSize(gWindow, &width, nullptr);
+    const float h = clientWindowChromeHeight();
+    if (h == 0.0f || y < 5.0f || y >= h || x < width - h * 3 || x >= width - 5.0f)
+        return -1;
+    return static_cast<int>((x - (width - h * 3)) / h);
+}
+
+static SDL_HitTestResult SDLCALL WindowHitTest(SDL_Window* window, const SDL_Point* point, void*)
+{
+    int width, height;
+    SDL_GetWindowSize(window, &width, &height);
+    const float edge = 5.0f * SDL_GetWindowDisplayScale(window);
+    if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED))
+    {
+        const bool left = point->x < edge, right = point->x >= width - edge;
+        const bool top = point->y < edge, bottom = point->y >= height - edge;
+        if (top) return left ? SDL_HITTEST_RESIZE_TOPLEFT : right ? SDL_HITTEST_RESIZE_TOPRIGHT : SDL_HITTEST_RESIZE_TOP;
+        if (bottom) return left ? SDL_HITTEST_RESIZE_BOTTOMLEFT : right ? SDL_HITTEST_RESIZE_BOTTOMRIGHT : SDL_HITTEST_RESIZE_BOTTOM;
+        if (left) return SDL_HITTEST_RESIZE_LEFT;
+        if (right) return SDL_HITTEST_RESIZE_RIGHT;
+    }
+    if (point->y < clientWindowChromeHeight() && point->x < width - clientWindowChromeHeight() * 3)
+        return SDL_HITTEST_DRAGGABLE;
+    return SDL_HITTEST_NORMAL;
+}
+
+static void DrawWindowChrome()
+{
+    const float h = clientWindowChromeHeight();
+    if (h == 0.0f) return;
+    const float width = ImGui::GetIO().DisplaySize.x;
+    auto* draw = ImGui::GetForegroundDrawList();
+    ImVec4 background = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+    if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+    {
+        const ImVec4 dim = ImGui::GetStyleColorVec4(ImGuiCol_ModalWindowDimBg);
+        background.x = background.x * (1.0f - dim.w) + dim.x * dim.w;
+        background.y = background.y * (1.0f - dim.w) + dim.y * dim.w;
+        background.z = background.z * (1.0f - dim.w) + dim.z * dim.w;
+    }
+    draw->AddRectFilled({0, 0}, {width, h}, ImGui::ColorConvertFloat4ToU32(background));
+    draw->AddText({h * 0.5f, (h - ImGui::GetFontSize()) * 0.5f},
+                  ImGui::GetColorU32(ImGuiCol_TextDisabled), "Sony Headphones");
+    float mx, my;
+    SDL_GetMouseState(&mx, &my);
+    const int hovered = (SDL_GetWindowFlags(gWindow) & SDL_WINDOW_MOUSE_FOCUS) ? ChromeButton(mx, my) : -1;
+    for (int i = 0; i < 3; ++i)
+    {
+        const float x = width - h * (3 - i);
+        const ImU32 color = hovered == i && i == 2 ? IM_COL32_WHITE : ImGui::GetColorU32(ImGuiCol_Text);
+        if (hovered == i)
+            draw->AddRectFilled({x + 2, 4}, {x + h - 2, h - 4},
+                                i == 2 ? IM_COL32(220, 55, 65, 255) : ImGui::GetColorU32(ImGuiCol_FrameBg), 8);
+        const float cx = x + h * 0.5f, cy = h * 0.5f, r = h * 0.13f;
+        if (i == 0)
+            draw->AddLine({cx - r, cy}, {cx + r, cy}, color, 1.5f);
+        else if (i == 1)
+        {
+            if (SDL_GetWindowFlags(gWindow) & SDL_WINDOW_MAXIMIZED)
+                draw->AddRect({cx - r + 3, cy - r - 3}, {cx + r + 3, cy + r - 3}, color);
+            draw->AddRect({cx - r, cy - r}, {cx + r, cy + r}, color);
+        }
+        else
+        {
+            draw->AddLine({cx - r, cy - r}, {cx + r, cy + r}, color, 1.5f);
+            draw->AddLine({cx + r, cy - r}, {cx - r, cy + r}, color, 1.5f);
+        }
+    }
+}
+#endif
+
 void mainLoop()
 {
     ImGuiIO& io = ImGui::GetIO();
     SDL_Event event;
     while (SDL_PollEvent(&event))
     {
+#ifdef _WIN32
+        static int pressedChrome = -1;
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.windowID == SDL_GetWindowID(gWindow) && event.button.button == SDL_BUTTON_LEFT)
+            pressedChrome = ChromeButton(event.button.x, event.button.y);
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.windowID == SDL_GetWindowID(gWindow) && event.button.button == SDL_BUTTON_LEFT)
+        {
+            const int released = ChromeButton(event.button.x, event.button.y);
+            if (released >= 0 && released == pressedChrome)
+            {
+                if (released == 0) SDL_MinimizeWindow(gWindow);
+                else if (released == 1)
+                {
+                    if (SDL_GetWindowFlags(gWindow) & SDL_WINDOW_MAXIMIZED) SDL_RestoreWindow(gWindow);
+                    else SDL_MaximizeWindow(gWindow);
+                }
+                else HandleCloseRequested();
+            }
+            pressedChrome = -1;
+        }
+        if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) pressedChrome = -1;
+#endif
         ImGui_ImplSDL3_ProcessEvent(&event);
         if (event.type == SDL_EVENT_QUIT)
             gShouldClose = true;
@@ -105,6 +240,10 @@ void mainLoop()
             ImFontConfig merge_config{};
             merge_config.MergeMode = true;
             merge_config.FontDataOwnedByAtlas = false; // Platform keeps the buffers alive
+#ifdef IMGUI_ENABLE_FREETYPE
+            // Vertical hinting improves small text without squeezing horizontal CJK strokes.
+            merge_config.FontLoaderFlags = ImGuiFreeTypeLoaderFlags_LightHinting;
+#endif
             // XXX: PlexSansIcon covered latin-1 pages. New ones won't overwrite them.
             // External fonts are meant to cover missing glyphs e.g. CJK ones anyway - so this is fine.
             // Order matters: glyph lookup falls through the merged fonts in the order they were added.
@@ -113,12 +252,12 @@ void mainLoop()
             if (const int size = clientPlatformLocateLatinFontBinary(&fontData))
             {
                 SDL_Log("Loading platform Latin font of size %d bytes", size);
-                io.Fonts->AddFontFromMemoryTTF((void*)fontData, size, 15.0f, &merge_config);
+                io.Fonts->AddFontFromMemoryTTF((void*)fontData, size, 16.0f, &merge_config);
             }
             if (const int size = clientPlatformLocateFontBinary(&fontData))
             {
                 SDL_Log("Loading platform font of size %d bytes", size);
-                io.Fonts->AddFontFromMemoryTTF((void*)fontData, size, 15.0f, &merge_config);
+                io.Fonts->AddFontFromMemoryTTF((void*)fontData, size, 16.0f, &merge_config);
             }
             if (const int size = clientPlatformLocateEmojiFontBinary(&fontData))
             {
@@ -128,7 +267,7 @@ void mainLoop()
                 // Composite COLR layers into colour bitmaps instead of the monochrome outline.
                 emoji_config.FontLoaderFlags |= ImGuiFreeTypeLoaderFlags_LoadColor;
 #endif
-                io.Fonts->AddFontFromMemoryTTF((void*)fontData, size, 15.0f, &emoji_config);
+                io.Fonts->AddFontFromMemoryTTF((void*)fontData, size, 16.0f, &emoji_config);
             }
         }
         // New frame
@@ -137,6 +276,9 @@ void mainLoop()
         ImGui::NewFrame();
     }    
     gShouldClose |= clientShouldExit();
+#ifdef _WIN32
+    DrawWindowChrome();
+#endif
     ImGui::Render();
     if (minimized)
     {
@@ -316,12 +458,23 @@ int main(int argc, char** argv)
         "SonyHeadphonesClient",
         CLIENT_WINDOW_WIDTH * displayScale, CLIENT_WINDOW_HEIGHT * displayScale,
         SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN
+#ifdef _WIN32
+        | SDL_WINDOW_BORDERLESS | SDL_WINDOW_TRANSPARENT
+#endif
     );
     if (!gWindow)
     {
         SDL_Log("Error: SDL_CreateWindow(): %s\n", SDL_GetError());
         return 1;
     }
+#ifdef _WIN32
+    SDL_SetWindowMinimumSize(gWindow, static_cast<int>(400 * displayScale), static_cast<int>(360 * displayScale));
+    if (!SDL_SetWindowHitTest(gWindow, WindowHitTest, nullptr))
+    {
+        SDL_Log("Custom window hit testing unavailable: %s", SDL_GetError());
+        SDL_SetWindowBordered(gWindow, true);
+    }
+#endif
 #ifdef MDR_CLIENT_DEBUGGER
     clientDebuggerSetWindow(gWindow);
 #endif
@@ -347,6 +500,9 @@ int main(int argc, char** argv)
     io.IniFilename = nullptr;
     // Setup Material You theme (Sony Sound Connect style)
     ImGui::StyleColorsDark(); // Base fallback
+#ifdef _WIN32
+    MaterialYouTheme::glassEnabled = ConfigureGlassWindow();
+#endif
     MaterialYouTheme::ApplyDefault();
     auto& style = ImGui::GetStyle();
     style.WindowPadding = ImVec2(24.0f, 20.0f);
@@ -354,10 +510,10 @@ int main(int argc, char** argv)
     style.ItemSpacing = ImVec2(10.0f, 12.0f);
     style.ItemInnerSpacing = ImVec2(8.0f, 6.0f);
     style.CellPadding = ImVec2(12.0f, 8.0f);
-    style.WindowRounding = 16.0f;
-    style.ChildRounding = 12.0f;
+    style.WindowRounding = 24.0f;
+    style.ChildRounding = 18.0f;
     style.PopupRounding = 12.0f;
-    style.FrameRounding = 8.0f;
+    style.FrameRounding = 10.0f;
     style.GrabRounding = 8.0f;
     style.TabRounding = 8.0f;
     style.ScrollbarSize = 10.0f;
@@ -381,7 +537,7 @@ int main(int argc, char** argv)
 #ifdef MDR_CLIENT_DEBUGGER
         ImFont* monospaceFont = io.Fonts->AddFontDefault();
 #endif
-        io.FontDefault = io.Fonts->AddFontFromMemoryCompressedBase85TTF(kEmbedFontPlexSansIcon, 15.0f);
+        io.FontDefault = io.Fonts->AddFontFromMemoryCompressedBase85TTF(kEmbedFontPlexSansIcon, 16.0f);
 #ifdef MDR_CLIENT_DEBUGGER
         clientDebuggerSetMonospaceFont(monospaceFont);
 #endif

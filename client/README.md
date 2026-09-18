@@ -46,22 +46,29 @@ The font `NeoXiHei-Code` is graciously provided by @lxgw, and is the default fon
 
 - https://github.com/lxgw/NeoXiHei-Code
 
-## Material You Theme
+## Interface and connection feedback
 
-The client uses a Material You dark theme inspired by Sony Sound Connect. Surface/outline/error colors are fixed values extracted from the Sound Connect APK, while primary accent colors are dynamically selected based on the connected device's `ModelColor`.
+The client uses neutral light surfaces, rounded device cards and a consistent blue accent.
+The connected device header is compact to leave more room for playback and sound controls.
+The precomputed Material You palette table is retained for future theme options; the light
+interface does not apply its dark accent values.
 
-Color palettes are precomputed using Google's [material-color-utilities](https://github.com/material-foundation/material-color-utilities) (SchemeTonalSpot) and stored as a constexpr table in `MaterialYouThemeTable.inc`.
+App Settings includes persistent **Interface animations** and **Connection notifications**
+preferences. The device illustration floats gently and displays an animated arc while a
+connection is pending. Disabling animations keeps these new visuals static.
 
-### Regenerating the theme table
+Notifications follow actual device readiness and connection transitions. A focused window
+shows a four-second confirmation card; otherwise the existing platform tray notification
+API is used (Windows respects the system's quiet-time setting). Intentional disconnects
+are silent. Failed attempts are limited to one alert per 30 seconds. Low headphone battery
+alerts trigger at 20% and rearm after charging or recovery above 25%; case battery is excluded.
+Unsupported platforms retain foreground cards but may not display background notifications.
 
-When adding support for new product colors:
+### Manual verification
 
-1. Edit `tooling/theme-generator/generate.mjs` — add the new `ModelColor` entry to `modelColorToSource`
-2. Run the generator:
-   ```
-   cd tooling/theme-generator
-   npm install
-   npm run generate
-   ```
-3. The script writes directly to `client/MaterialYouThemeTable.inc`
-4. Update the `ModelColor` enum in `libmdr/include/mdr/ProtocolV2T1.hpp` if needed
+- Connect a supported headset and check that confirmation appears only after initialization.
+- Repeat with the client in the background and verify one system notification.
+- Cancel an attempt, disconnect deliberately, and simulate an unexpected link loss.
+- Check a low-battery headset, charging, and repeated updates for duplicate alerts.
+- Disable animations/notifications, restart, and check that preferences persist.
+- Inspect long track titles, narrow windows, DPI scaling, and both interface languages.

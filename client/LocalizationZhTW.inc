@@ -240,3 +240,11 @@
 {"Voice guidance volume", "語音提示音量"},
 {"Connection mode", "連線模式"},
 {"Safe listening", "安全聆聽"},
+
+{"Interface animations", "介面動畫"},
+{"Connection notifications", "連線通知"},
+{"Keep your headphones nearby.", "請將耳機放在附近。"},
+{"Connected. Ready to listen.", "已連線，開始聆聽。"},
+{"Connection lost. Reconnecting...", "連線中斷，正在重新連線…"},
+{"Unable to connect. Please try again.", "無法連線，請再試一次。"},
+{"Battery is low. Time to recharge.", "耳機電量偏低，請充電。"},

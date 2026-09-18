@@ -15,6 +15,8 @@ struct ClientSettings
     // Behaviour
     bool closeToTray = true;
     bool autoStart = false;
+    bool animations = true;
+    bool notifications = true;
     bool trayHintShown = false;
     int language = 0; // ClientLanguage: 0 auto, 1 English, 2 Traditional Chinese
 };

@@ -623,10 +623,11 @@ bool ImModalButton(const char* label, int lineIndex = 0, int lineTotal = 1)
     return ImGui::Button(label, ImVec2{std::max(1.0f, width), 0});
 }
 
+extern float clientWindowChromeHeight();
 void ImSetNextWindowCentered()
 {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
-    const float margin = ImGui::GetStyle().WindowPadding.x;
+    const float margin = std::max(ImGui::GetStyle().WindowPadding.x, clientWindowChromeHeight());
     const float width = std::max(1.0f, std::min(display.x - margin * 2, ImGui::GetFontSize() * 44));
     ImGui::SetNextWindowPos(display * 0.5f, ImGuiCond_Always, {0.5f, 0.5f});
     ImGui::SetNextWindowSize({width, 0});
@@ -890,17 +891,26 @@ void DrawListeningHero(const char* title, const char* subtitle)
     const float unit = ImGui::GetFontSize();
     const ImVec2 start = ImGui::GetCursorScreenPos();
     const float width = ImGui::GetContentRegionAvail().x;
-    const float height = unit * 6.5f;
+    const bool compact = connState == CONN_STATE_CONNECTED;
+    const float height = unit * (compact ? 4.8f : 8.0f);
     auto* draw = ImGui::GetWindowDrawList();
     const ImU32 accent = ImGui::GetColorU32(ImGuiCol_CheckMark);
     draw->AddRectFilled(start, start + ImVec2(width, height),
-                        ImGui::GetColorU32(ImGuiCol_Button), unit);
+                        MaterialYouTheme::ArgbToImU32(0xFFFFFFFF), unit * 1.5f);
     // Hide the illustration on narrow windows to leave room for the heading.
     const bool illustrated = width > unit * 25;
     if (illustrated)
     {
-        const ImVec2 center = start + ImVec2(width - unit * 4, height * 0.5f);
-        draw->AddCircleFilled(center, unit * 2.6f, ImGui::GetColorU32(ImGuiCol_FrameBg));
+        const float floatY = !compact && clientSettings().animations
+            ? std::sin(static_cast<float>(ImGui::GetTime()) * 2.0f) * unit * 0.18f : 0.0f;
+        const ImVec2 center = start + ImVec2(width - unit * 4, height * 0.5f + floatY);
+        draw->AddCircleFilled(center, unit * 2.8f, MaterialYouTheme::ArgbToImU32(0xFFF5F5F7));
+        if (connState == CONN_STATE_CONNECTING)
+        {
+            const float phase = clientSettings().animations ? static_cast<float>(ImGui::GetTime()) * 3.0f : 0.0f;
+            draw->PathArcTo(center, unit * 3.1f, phase, phase + 4.6f, 48);
+            draw->PathStroke(accent, 0, unit * 0.12f);
+        }
         draw->PathArcTo(center, unit * 1.6f, 3.14159265f, 6.2831853f, 32);
         draw->PathStroke(accent, 0, unit * 0.22f);
         for (float side : {-1.0f, 1.0f})
@@ -910,7 +920,7 @@ void DrawListeningHero(const char* title, const char* subtitle)
                                 cup + ImVec2(unit * 0.35f, unit * 0.75f), accent, unit * 0.3f);
         }
     }
-    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * 0.8f));
+    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * (compact ? 0.5f : 1.2f)));
     ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_CheckMark), tr("PERSONAL AUDIO"));
     ImGui::PushFont(nullptr, unit * 1.6f);
     // Fit longer model names without colliding with the illustration.
@@ -921,10 +931,10 @@ void DrawListeningHero(const char* title, const char* subtitle)
         ImGui::PopFont();
         ImGui::PushFont(nullptr, unit * 1.6f * titleWidth / measured);
     }
-    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * 2.2f));
+    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * (compact ? 1.6f : 2.8f)));
     ImGui::TextUnformatted(title);
     ImGui::PopFont();
-    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * 4.5f));
+    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * (compact ? 3.5f : 5.4f)));
     ImGui::TextDisabled("%s", subtitle);
     ImGui::SetCursorScreenPos(start);
     ImGui::Dummy({width, height});
@@ -978,6 +988,10 @@ void DrawLanguageCombo(const char* id, float width)
 void DrawAppSettings()
 {
     ClientSettings& settings = clientSettings();
+    if (ImGui::Checkbox(tr("Interface animations"), &settings.animations))
+        clientSettingsSave();
+    if (ImGui::Checkbox(tr("Connection notifications"), &settings.notifications))
+        clientSettingsSave();
     DrawLanguageCombo(tr("Language"), ImGui::GetFontSize() * 12.0f);
     if (ImGui::Checkbox(tr("Keep running in the system tray when the window is closed"), &settings.closeToTray))
         clientSettingsSave();
@@ -1018,7 +1032,8 @@ void DrawDeviceDiscovery()
     {
         static MDRDeviceInfo* pDeviceInfo = nullptr;
         static int nDeviceInfo = 0;
-        DrawListeningHero(tr("Your sound. Your space."), tr("Connect your Sony headphones."));
+        DrawListeningHero(reconnecting ? connectionAttempt.name.c_str() : tr("Your sound. Your space."),
+                          reconnecting ? tr("Connecting...") : tr("Connect your Sony headphones."));
         ImGui::SeparatorText(tr("Connection"));
         // Chose, and have the GATT backend active
         static bool usingBLE = false;
@@ -1386,18 +1401,12 @@ void DrawDeviceConnecting()
                 ImGui::OpenPopup("Connection"), popup = true;
             if (ImGui::BeginPopupModal("Connection", nullptr, kImWindowFlagsTopMost))
             {
-                ImGui::NewLine();
-                ImTextCentered(connectionAttempt.automatic ? tr("Reconnecting...") : tr("Connecting..."));
-                if (!connectionAttempt.name.empty())
-                    ImTextCentered(connectionAttempt.name.c_str());
-                ImTextCentered(mdr::Format(fmt::runtime(tr("Device type: {}")), ConnectionAttemptName()).c_str());
-                ImGui::Dummy({0, 16.0f});
-                ImSpinner(1000.0f, 24.0f,
-                          MaterialYouTheme::ArgbToImU32(MaterialYouTheme::FixedSurfaceColors::onSurface), 2.0f, true,
-                          false, 2.0f, ImEaseInOutCubic);
-                ImGui::NewLine();
-                ImTextCentered(mdrConnectionGetLastError(conn));
-                ImGui::NewLine();
+                DrawListeningHero(connectionAttempt.name.empty() ? tr("Your headphones") : connectionAttempt.name.c_str(),
+                                  tr("Connecting..."));
+                ImGui::TextWrapped("%s", tr("Keep your headphones nearby."));
+                const char* error = mdrConnectionGetLastError(conn);
+                if (error && *error)
+                    ImGui::TextWrapped("%s", error);
                 if (ImModalButton(tri(PSI_REMOVE, "Cancel")))
                 {
                     gAutoConnectSuppressed = true;
@@ -2412,6 +2421,98 @@ void DrawDeviceDisconnect()
     }
 }
 
+// Notifications observe real connection/readiness transitions, independent of the visible tab.
+extern SDL_Window* gWindow;
+void DrawConnectionNotification()
+{
+    static bool wasReady = false;
+    static bool wasConnecting = false;
+    static bool lowBatteryReported = false;
+    static double lastFailure = -60.0;
+    static double shownAt = -10.0;
+    static std::string message;
+    static bool success = false;
+    const bool ready = connState == CONN_STATE_CONNECTED && gDevice && mdrHeadphonesIsReady(gDevice);
+    const double now = ImGui::GetTime();
+    auto notify = [&](const char* text, bool connected) {
+        if (!clientSettings().notifications)
+            return;
+        success = connected;
+        const bool foreground = gWindow && (SDL_GetWindowFlags(gWindow) & SDL_WINDOW_INPUT_FOCUS) &&
+            !(SDL_GetWindowFlags(gWindow) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED));
+        if (foreground)
+        {
+            message = text;
+            shownAt = now;
+        }
+        else
+            clientPlatformTrayNotify("SonyHeadphonesClient", text);
+    };
+    if (ready && !wasReady)
+    {
+        notify(tr("Connected. Ready to listen."), true);
+        lowBatteryReported = false;
+    }
+    else if (wasReady && !ready)
+    {
+        if (!gAutoConnectSuppressed)
+            notify(tr("Connection lost. Reconnecting..."), false);
+        lowBatteryReported = false;
+    }
+    else if (wasConnecting && connState == CONN_STATE_DISCONNECTED && now - lastFailure > 30.0)
+    {
+        notify(tr("Unable to connect. Please try again."), false);
+        lastFailure = now;
+    }
+    // One low-battery alert per discharge cycle; ignore the charging case.
+    if (ready)
+    {
+        bool low = false, known = false, recovered = true;
+        for (const auto& battery : gState.mBatteries)
+        {
+            if (!battery.present || !battery.update_threshold_percent || battery.part == MDR_BATTERY_CASE)
+                continue;
+            known = true;
+            low |= battery.level_percent <= 20 && battery.charging == MDR_CHARGING_NO;
+            recovered &= battery.level_percent > 25 || battery.charging == MDR_CHARGING_YES;
+        }
+        if (low && !lowBatteryReported)
+        {
+            // Let the connection confirmation finish before presenting the battery alert.
+            if (now - shownAt > 4.0)
+            {
+                notify(tr("Battery is low. Time to recharge."), false);
+                lowBatteryReported = true;
+            }
+        }
+        else if (known && recovered)
+            lowBatteryReported = false;
+    }
+    wasReady = ready;
+    wasConnecting = connState == CONN_STATE_CONNECTING;
+    if (!clientSettings().notifications || now - shownAt >= 4.0)
+        return;
+    const float age = static_cast<float>(now - shownAt);
+    const float progress = clientSettings().animations ? std::clamp(age / 0.3f, 0.0f, 1.0f) : 1.0f;
+    const float alpha = clientSettings().animations ? std::min(progress, (4.0f - age) / 0.3f) : 1.0f;
+    const auto display = ImGui::GetIO().DisplaySize;
+    const float unit = ImGui::GetFontSize();
+    const float width = std::min(display.x - 24.0f, unit * 27.0f);
+    const float height = unit * 3.6f;
+    const ImVec2 min((display.x - width) * 0.5f, display.y - height - 20.0f + (1.0f - progress) * 16.0f);
+    auto* draw = ImGui::GetForegroundDrawList();
+    draw->AddRectFilled(min + ImVec2(0, 3), min + ImVec2(width, height + 3),
+                        IM_COL32(0, 0, 0, static_cast<int>(20 * alpha)), 18.0f);
+    draw->AddRectFilled(min, min + ImVec2(width, height),
+                        IM_COL32(255, 255, 255, static_cast<int>(255 * alpha)), 18.0f);
+    draw->AddCircleFilled(min + ImVec2(unit * 1.5f, height * 0.5f), unit * 0.7f,
+                          IM_COL32(0, 113, 227, static_cast<int>(255 * alpha)));
+    draw->AddText(min + ImVec2(unit * 1.15f, height * 0.5f - unit * 0.5f),
+                  IM_COL32(255, 255, 255, static_cast<int>(255 * alpha)), success ? PSI_OK : PSI_INFO_SIGN_ALT);
+    draw->AddText(ImGui::GetFont(), unit, min + ImVec2(unit * 3.0f, unit * 0.8f),
+                  IM_COL32(29, 29, 31, static_cast<int>(255 * alpha)), message.c_str(), nullptr, width - unit * 4.0f);
+}
+
 void DrawApp()
 {
     auto& io = ImGui::GetIO();
@@ -2419,8 +2520,8 @@ void DrawApp()
 #ifdef MDR_CLIENT_DEBUGGER
     if (gDebuggerOnlyMode)
     {
-        ImGui::SetNextWindowPos({0, 0});
-        ImGui::SetNextWindowSize(io.DisplaySize);
+        ImGui::SetNextWindowPos({0, clientWindowChromeHeight()});
+        ImGui::SetNextWindowSize({io.DisplaySize.x, io.DisplaySize.y - clientWindowChromeHeight()});
         if (ImGui::Begin("SonyHeadphonesClient", nullptr, kImWindowFlagsTopMost))
             ImGui::TextDisabled(tr("Packet replay mode"));
         ImGui::End();
@@ -2432,8 +2533,8 @@ void DrawApp()
 #endif
     if (connState == CONN_STATE_CONNECTED && gDevice)
         PollDevice();
-    ImGui::SetNextWindowPos({0, 0});
-    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::SetNextWindowPos({0, clientWindowChromeHeight()});
+    ImGui::SetNextWindowSize({io.DisplaySize.x, io.DisplaySize.y - clientWindowChromeHeight()});
     ImGuiWindowFlags flags = kImWindowFlagsTopMost;
     switch (connState)
     {
@@ -2443,7 +2544,10 @@ void DrawApp()
     default:
         break;
     }
-    if (ImGui::Begin("SonyHeadphonesClient", nullptr, flags))
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    const bool mainVisible = ImGui::Begin("SonyHeadphonesClient", nullptr, flags);
+    ImGui::PopStyleVar();
+    if (mainVisible)
     {
         switch (connState)
         {
@@ -2467,6 +2571,7 @@ void DrawApp()
         }
     }
     ImGui::End();
+    DrawConnectionNotification();
     if (connState == CONN_STATE_CONNECTED && gDevice)
         CommitDevice();
 #ifdef MDR_CLIENT_DEBUGGER
