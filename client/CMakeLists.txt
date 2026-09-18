@@ -93,6 +93,8 @@ target_sources(ImGuiSDL3 PRIVATE
 )
 target_compile_definitions(ImGuiSDL3 PUBLIC
     IMGUI_DISABLE_OBSOLETE_FUNCTIONS
+    # 32-bit ImWchar so codepoints above U+FFFF (emoji in track titles) survive text decoding
+    IMGUI_USE_WCHAR32
     $<$<NOT:$<CONFIG:Debug>>:IMGUI_DISABLE_DEMO_WINDOWS>
     $<$<NOT:$<CONFIG:Debug>>:IMGUI_DISABLE_DEBUG_TOOLS>
 )
