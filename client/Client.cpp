@@ -772,9 +772,20 @@ ConnectionAttemptState connectionAttempt;
 // Auto-connect bookkeeping. Suppressed after a manual disconnect/cancel until the next manual connect.
 bool gAutoConnectSuppressed = false;
 uint64_t gNextAutoConnectMs = 0;
+int gAutoConnectFailures = 0;       // Consecutive failed automatic attempts, drives the backoff
+bool gAutoConnectDeviceSeen = false; // Whether the remembered device was in the last scan
 std::string gLastDisconnectMessage;
 constexpr uint64_t kAutoConnectRetryMs = 15'000;
+constexpr uint64_t kAutoConnectRetryMaxMs = 120'000;
 constexpr uint64_t kReconnectGraceMs = 3'000;
+
+uint64_t AutoConnectBackoffMs()
+{
+    uint64_t delay = kAutoConnectRetryMs;
+    for (int i = 0; i < gAutoConnectFailures && delay < kAutoConnectRetryMaxMs; ++i)
+        delay *= 2;
+    return std::min(delay, kAutoConnectRetryMaxMs);
+}
 
 const char* ConnectionAttemptName()
 {
@@ -939,7 +950,9 @@ void DrawAppSettings()
 
 void DrawDeviceDiscovery()
 {
-    assert(connState == CONN_STATE_NO_CONNECTION);
+    // Also drawn while an *automatic* attempt is in flight, so reconnecting stays inline.
+    assert(connState == CONN_STATE_NO_CONNECTION || (connState == CONN_STATE_CONNECTING && connectionAttempt.automatic));
+    const bool reconnecting = connState == CONN_STATE_CONNECTING;
     ImSetNextWindowCentered();
     static bool popup = false;
     if (!popup)
@@ -1028,39 +1041,73 @@ void DrawDeviceDiscovery()
         if (connInitResult == MDR_RESULT_OK && SDL_GetTicks() - lastRefreshMs >= kAutoRefreshIntervalMs)
             RefreshDeviceList();
         // Auto-connect: the last successfully connected device shows up -> connect without a click.
+        if (!reconnecting)
         {
             const ClientSettings& settings = clientSettings();
-            if (connInitResult == MDR_RESULT_OK && !gAutoConnectSuppressed && !settings.lastDeviceAddress.empty() &&
+            const MDRDeviceInfo* remembered = nullptr;
+            if (!settings.lastDeviceAddress.empty())
+                for (const MDRDeviceInfo& device : std::span<MDRDeviceInfo>{pDeviceInfo, static_cast<size_t>(nDeviceInfo)})
+                    if (SDL_strcasecmp(device.szDeviceMacAddress, settings.lastDeviceAddress.c_str()) == 0)
+                        remembered = &device;
+            // The device (re)appearing after being absent is the "headphones just turned on" moment:
+            // forget any backoff and try right away.
+            if (remembered && !gAutoConnectDeviceSeen)
+            {
+                gAutoConnectFailures = 0;
+                gNextAutoConnectMs = std::min(gNextAutoConnectMs, SDL_GetTicks() + kReconnectGraceMs);
+            }
+            gAutoConnectDeviceSeen = remembered != nullptr;
+            if (remembered && connInitResult == MDR_RESULT_OK && !gAutoConnectSuppressed &&
                 settings.lastDeviceBLE == usingBLE && SDL_GetTicks() >= gNextAutoConnectMs)
             {
-                for (const MDRDeviceInfo& device : std::span<MDRDeviceInfo>{pDeviceInfo, static_cast<size_t>(nDeviceInfo)})
-                {
-                    if (SDL_strcasecmp(device.szDeviceMacAddress, settings.lastDeviceAddress.c_str()) != 0)
-                        continue;
-                    // Use the protocol that worked last time so we skip Auto's 10 s fallback wait.
-                    DEVICE_TYPE type = deviceType;
-                    if (type == DEVICE_TYPE_AUTO && settings.lastDeviceProtocol == 1) type = DEVICE_TYPE_V1;
-                    if (type == DEVICE_TYPE_AUTO && settings.lastDeviceProtocol == 2) type = DEVICE_TYPE_V2;
-                    MDR_LOG("[Client] Auto-connecting to {} ({})", device.szDeviceName, device.szDeviceMacAddress)
-                    const int res = StartConnection(clientPlatformConnectionGet(), device.szDeviceMacAddress,
-                                                    device.szDeviceName, usingBLE, type, true);
-                    connState = (res != MDR_RESULT_OK && res != MDR_RESULT_INPROGRESS)
-                        ? CONN_STATE_DISCONNECTED : CONN_STATE_CONNECTING;
-                    gNextAutoConnectMs = SDL_GetTicks() + kAutoConnectRetryMs;
-                    break;
-                }
+                // Use the protocol that worked last time so we skip Auto's 10 s fallback wait.
+                DEVICE_TYPE type = deviceType;
+                if (type == DEVICE_TYPE_AUTO && settings.lastDeviceProtocol == 1) type = DEVICE_TYPE_V1;
+                if (type == DEVICE_TYPE_AUTO && settings.lastDeviceProtocol == 2) type = DEVICE_TYPE_V2;
+                MDR_LOG("[Client] Auto-connecting to {} ({}), attempt {}", remembered->szDeviceName,
+                        remembered->szDeviceMacAddress, gAutoConnectFailures + 1)
+                const int res = StartConnection(clientPlatformConnectionGet(), remembered->szDeviceMacAddress,
+                                                remembered->szDeviceName, usingBLE, type, true);
+                connState = (res != MDR_RESULT_OK && res != MDR_RESULT_INPROGRESS)
+                    ? CONN_STATE_DISCONNECTED : CONN_STATE_CONNECTING;
+                gNextAutoConnectMs = SDL_GetTicks() + AutoConnectBackoffMs();
             }
         }
         auto DrawDeviceList = [&]()
         {
             ImGui::SeparatorText("Available Devices");
-            if (!gLastDisconnectMessage.empty())
+            if (reconnecting)
+            {
+                ImSpinner(1000.0f, ImGui::GetFontSize() * 0.6f,
+                          MaterialYouTheme::ArgbToImU32(MaterialYouTheme::FixedSurfaceColors::onSurface), 2.0f, true,
+                          false, 2.0f, ImEaseInOutCubic);
+                ImGui::SameLine();
+                ImGui::Text("Reconnecting to %s (%s)...", connectionAttempt.name.c_str(), ConnectionAttemptName());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Cancel"))
+                {
+                    gAutoConnectSuppressed = true;
+                    CloseDevice();
+                    mdrConnectionDisconnect(clientPlatformConnectionGet());
+                    connectionAttempt = {};
+                    connState = CONN_STATE_NO_CONNECTION;
+                }
+            }
+            else if (!gLastDisconnectMessage.empty())
             {
                 ImGui::PushStyleColor(ImGuiCol_Text,
                                       MaterialYouTheme::ArgbToImVec4(MaterialYouTheme::FixedSurfaceColors::error));
                 ImGui::TextWrapped(PSI_EXCLAMATION_SIGN " %s", gLastDisconnectMessage.c_str());
                 ImGui::PopStyleColor();
+                const uint64_t now = SDL_GetTicks();
+                if (gAutoConnectDeviceSeen && !gAutoConnectSuppressed && gNextAutoConnectMs > now)
+                    ImGui::TextDisabled("Retrying automatically in %llu s (attempt %d).",
+                                        static_cast<unsigned long long>((gNextAutoConnectMs - now + 999) / 1000),
+                                        gAutoConnectFailures + 1);
+                else if (gAutoConnectSuppressed)
+                    ImGui::TextDisabled("Automatic reconnect paused. Click the device to connect.");
             }
+            ImGui::BeginDisabled(reconnecting);
             std::span<MDRDeviceInfo> devices{pDeviceInfo, static_cast<size_t>(nDeviceInfo)};
             if (!devices.empty())
             {
@@ -1079,6 +1126,7 @@ void DrawDeviceDiscovery()
                     if (ImGui::Button(rowLabel.c_str(), {ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight()}))
                     {
                         gAutoConnectSuppressed = false;
+                        gAutoConnectFailures = 0;
                         const int res = StartConnection(clientPlatformConnectionGet(), device.szDeviceMacAddress,
                                                         device.szDeviceName, usingBLE, deviceType);
                         connState = (res != MDR_RESULT_OK && res != MDR_RESULT_INPROGRESS)
@@ -1095,6 +1143,7 @@ void DrawDeviceDiscovery()
             }
             if (ImModalButton(PSI_REFRESH " Refresh"))
                 RefreshDeviceList();
+            ImGui::EndDisabled(); // reconnecting
         };
         if (connInitResult != MDR_RESULT_OK && connInitResult != MDR_RESULT_INPROGRESS)
         {
@@ -1197,6 +1246,7 @@ void DrawDeviceConnecting()
             settings.lastDeviceProtocol = ConnectionProtocolVersion() == MDR_PROTOCOL_V1 ? 1 : 2;
             clientSettingsSave();
             gLastDisconnectMessage.clear();
+            gAutoConnectFailures = 0;
         }
         clientPacketObserverAttach(gDevice);
         if (mdrHeadphonesRequestInit(gDevice) != MDR_RESULT_OK)
@@ -1206,6 +1256,8 @@ void DrawDeviceConnecting()
     case MDR_RESULT_ERROR_TIMEOUT:
     case MDR_RESULT_INPROGRESS:
         {
+            if (connectionAttempt.automatic)
+                return; // DrawApp draws the discovery screen with an inline status instead
             ImSetNextWindowCentered();
             static bool popup = false;
             if (!popup)
@@ -2225,13 +2277,23 @@ void DrawDeviceDisconnect()
     gLastDisconnectMessage = reason.empty() ? "Connection lost. Waiting for the headphones to come back."
         : mdr::Format("Connection lost: {}. Waiting for the headphones to come back.", reason);
 
+    const bool automaticAttemptFailed = connectionAttempt.automatic;
     CloseDevice();
     if (conn)
         mdrConnectionDisconnect(conn);
     connectionAttempt = {};
     connState = CONN_STATE_NO_CONNECTION;
-    // Give the Bluetooth link a moment to settle before trying again.
-    gNextAutoConnectMs = SDL_GetTicks() + kReconnectGraceMs;
+    if (automaticAttemptFailed)
+    {
+        // A failed automatic attempt: back off so we do not hammer a device that is not ready.
+        ++gAutoConnectFailures;
+        gNextAutoConnectMs = SDL_GetTicks() + AutoConnectBackoffMs();
+    }
+    else
+    {
+        // An established session dropped: give the Bluetooth link a moment to settle, then retry.
+        gNextAutoConnectMs = SDL_GetTicks() + kReconnectGraceMs;
+    }
 }
 
 void DrawApp()
@@ -2277,6 +2339,8 @@ void DrawApp()
             break;
         case CONN_STATE_CONNECTING:
             DrawDeviceConnecting();
+            if (connState == CONN_STATE_CONNECTING && connectionAttempt.automatic)
+                DrawDeviceDiscovery();
             break;
         case CONN_STATE_CONNECTED:
             DrawDeviceControls();
