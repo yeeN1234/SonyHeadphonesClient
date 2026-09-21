@@ -103,6 +103,7 @@ void __dont_touch_my_garbage_exclamation_marks__()
 int clientPlatformLocateEmojiFontBinary(const char** outData) { *outData = nullptr; return 0; }
 int clientPlatformLocateLatinFontBinary(const char** outData) { *outData = nullptr; return 0; }
 
+int clientPlatformSingleInstanceAcquire(int) { return 1; }
 int clientPlatformBluetoothResetSupported(void) { return 0; }
 int clientPlatformBluetoothResetStart(void) { return 0; }
 int clientPlatformBluetoothResetInProgress(void) { return 0; }

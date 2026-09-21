@@ -113,6 +113,16 @@ extern "C" {
      */
     extern void clientPlatformTrayNotify(const char* title, const char* message);
 
+    /* ---- Single instance ---------------------------------------------------------------------- */
+    /**
+     * @brief Claim the one instance allowed for this user, so two clients never fight over the
+     * headphones' single MDR session or over the settings file.
+     * @param surfaceExisting Non-zero to ask an already running instance to bring its window up.
+     * @return Non-zero when this process owns the instance and may continue starting;
+     * zero when another instance is already running and this one should exit quietly.
+     */
+    extern int clientPlatformSingleInstanceAcquire(int surfaceExisting);
+
     /* ---- Bluetooth radio reset ------------------------------------------------------------------ */
     /** @return Non-zero when this platform can power-cycle the Bluetooth radio from the app. */
     extern int clientPlatformBluetoothResetSupported(void);

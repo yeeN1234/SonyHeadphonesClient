@@ -457,6 +457,15 @@ int main(int argc, char** argv)
         return 2;
     }
 #endif
+    // Two clients racing for the headphones' single MDR session leave half-open RFCOMM channels
+    // behind and clobber each other's settings file, so only one may run. Replaying a capture
+    // touches neither, and is allowed alongside a running client.
+    if (!options.replayPath &&
+        !clientPlatformSingleInstanceAcquire(options.startMinimized ? 0 : 1))
+    {
+        MDR_LOG("SonyHeadphonesClient is already running; asked it to show its window.");
+        return 0;
+    }
 
     if (!SDL_Init(SDL_INIT_VIDEO))
     {

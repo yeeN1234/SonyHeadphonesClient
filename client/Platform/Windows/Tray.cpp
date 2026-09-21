@@ -23,6 +23,13 @@ using std::min;
 
 namespace
 {
+    // Single instance. The hidden tray window doubles as the address of the running instance:
+    // a second launch finds it by class name and asks it to come to the front.
+    constexpr wchar_t kInstanceMutexName[] = L"Local\\SonyHeadphonesClient.SingleInstance";
+    constexpr wchar_t kShowWindowMessageName[] = L"SonyHeadphonesClientShowWindow";
+    HANDLE gInstanceMutex = nullptr;
+    UINT gShowWindowMsg = 0;
+
     constexpr UINT kTrayCallback = WM_APP + 1;
     constexpr UINT kTrayId = 1;
     constexpr UINT kMenuNoiseCancelling = 1001;
@@ -387,6 +394,12 @@ namespace
             }
             return 0;
         }
+        if (gShowWindowMsg && msg == gShowWindowMsg)
+        {
+            // A second launch asked us to surface instead of starting its own client.
+            PushEvent(CLIENT_TRAY_ACTION_SHOW_WINDOW);
+            return 0;
+        }
         if (gTaskbarCreatedMsg && msg == gTaskbarCreatedMsg)
         {
             // Explorer restarted: the icon is gone, add it again.
@@ -412,6 +425,41 @@ namespace
 }
 
 extern "C" {
+int clientPlatformSingleInstanceAcquire(int surfaceExisting)
+{
+    if (gInstanceMutex)
+        return 1;
+    // Held for the lifetime of the process; Windows releases it even if we are killed.
+    gInstanceMutex = CreateMutexW(nullptr, TRUE, kInstanceMutexName);
+    if (gInstanceMutex && GetLastError() != ERROR_ALREADY_EXISTS)
+        return 1;
+    if (gInstanceMutex)
+    {
+        CloseHandle(gInstanceMutex);
+        gInstanceMutex = nullptr;
+    }
+    if (surfaceExisting)
+    {
+        if (!gShowWindowMsg)
+            gShowWindowMsg = RegisterWindowMessageW(kShowWindowMessageName);
+        // The other instance may still be starting up, so give its tray window a moment to appear.
+        for (int attempt = 0; attempt < 20; ++attempt)
+        {
+            if (HWND existing = FindWindowW(kWindowClass, nullptr))
+            {
+                DWORD processId = 0;
+                GetWindowThreadProcessId(existing, &processId);
+                // Without this the other process may only flash in the taskbar instead of coming up.
+                AllowSetForegroundWindow(processId);
+                PostMessageW(existing, gShowWindowMsg, 0, 0);
+                break;
+            }
+            Sleep(100);
+        }
+    }
+    return 0;
+}
+
 int clientPlatformTrayInit(void)
 {
     if (gTrayWnd)
@@ -427,6 +475,8 @@ int clientPlatformTrayInit(void)
     if (Gdiplus::GdiplusStartup(&gGdiplusToken, &startupInput, nullptr) != Gdiplus::Ok)
         gGdiplusToken = 0;
     gTaskbarCreatedMsg = RegisterWindowMessageW(L"TaskbarCreated");
+    if (!gShowWindowMsg)
+        gShowWindowMsg = RegisterWindowMessageW(kShowWindowMessageName);
     // A hidden top-level window (not HWND_MESSAGE) so it still receives broadcasts
     // such as TaskbarCreated and WM_SETTINGCHANGE.
     gTrayWnd = CreateWindowExW(WS_EX_TOOLWINDOW, kWindowClass, L"SonyHeadphonesClient", WS_OVERLAPPED, 0, 0, 0, 0,
