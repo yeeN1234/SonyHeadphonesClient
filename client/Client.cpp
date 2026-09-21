@@ -623,6 +623,18 @@ bool ImModalButton(const char* label, int lineIndex = 0, int lineTotal = 1)
     return ImGui::Button(label, ImVec2{std::max(1.0f, width), 0});
 }
 
+// The discovery and connecting screens are drawn straight on the window surface as a centred,
+// scrollable column. They used to be modals, which put a second rounded card (with its own
+// background and a dark gutter) inside the already custom-framed window.
+bool ImBeginScreenColumn(const char* id)
+{
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float width = std::max(1.0f, std::min(avail, ImGui::GetFontSize() * 44));
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - width) * 0.5f);
+    return ImGui::BeginChild(id, {width, 0}, ImGuiChildFlags_AlwaysUseWindowPadding,
+                             ImGuiWindowFlags_NoBackground);
+}
+
 extern float clientWindowChromeHeight();
 void ImSetNextWindowCentered()
 {
@@ -1167,11 +1179,7 @@ void DrawDeviceDiscovery()
     // Also drawn while an *automatic* attempt is in flight, so reconnecting stays inline.
     assert(connState == CONN_STATE_NO_CONNECTION || (connState == CONN_STATE_CONNECTING && connectionAttempt.automatic));
     const bool reconnecting = connState == CONN_STATE_CONNECTING;
-    ImSetNextWindowCentered();
-    static bool popup = false;
-    if (!popup)
-        ImGui::OpenPopup("DeviceDiscovery"), popup = true;
-    if (ImGui::BeginPopupModal("DeviceDiscovery", nullptr, kImWindowFlagsTopMost))
+    if (ImBeginScreenColumn("##DeviceDiscovery"))
     {
         static MDRDeviceInfo* pDeviceInfo = nullptr;
         static int nDeviceInfo = 0;
@@ -1462,11 +1470,8 @@ void DrawDeviceDiscovery()
                 ImGui::TextWrapped(tr("Packet export: %s"), exportStatus);
         }
 #endif
-        DrawClosePrompt();
-        ImGui::EndPopup();
     }
-    else
-        popup = false;
+    ImGui::EndChild(); // DrawApp stacks the close prompt on the main window
 }
 
 // NOTE: Only CONN_STATE_DISCONNECTED state shows the modal
@@ -1539,11 +1544,7 @@ void DrawDeviceConnecting()
         {
             if (connectionAttempt.automatic)
                 return; // DrawApp draws the discovery screen with an inline status instead
-            ImSetNextWindowCentered();
-            static bool popup = false;
-            if (!popup)
-                ImGui::OpenPopup("Connection"), popup = true;
-            if (ImGui::BeginPopupModal("Connection", nullptr, kImWindowFlagsTopMost))
+            if (ImBeginScreenColumn("##Connection"))
             {
                 DrawListeningHero(connectionAttempt.name.empty() ? tr("Your headphones") : connectionAttempt.name.c_str(),
                                   tr("Connecting..."));
@@ -1559,11 +1560,8 @@ void DrawDeviceConnecting()
                     connectionAttempt = {};
                     connState = CONN_STATE_NO_CONNECTION;
                 }
-                DrawClosePrompt();
-                ImGui::EndPopup();
             }
-            else
-                popup = false;
+            ImGui::EndChild();
             return;
         }
     default:

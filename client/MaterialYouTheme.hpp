@@ -75,7 +75,7 @@ inline void Apply(const Theme&) {
     ImVec4* c = style.Colors;
 
     // Fixed surface colors (Sony standard)
-    c[ImGuiCol_WindowBg]        = ArgbToImVec4(FixedSurfaceColors::surface, glassEnabled ? 0.35f : 1.0f);
+    c[ImGuiCol_WindowBg]        = ArgbToImVec4(FixedSurfaceColors::surface); // Opaque: the chrome shares it
     c[ImGuiCol_ChildBg]         = ArgbToImVec4(FixedSurfaceColors::surface, 0.0f);
     c[ImGuiCol_PopupBg]         = ArgbToImVec4(FixedSurfaceColors::surfaceContainerLow, glassEnabled ? 0.82f : 1.0f);
     c[ImGuiCol_MenuBarBg]       = ArgbToImVec4(FixedSurfaceColors::surfaceContainerHigh);

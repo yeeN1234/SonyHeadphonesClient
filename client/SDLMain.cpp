@@ -183,8 +183,9 @@ static void DrawWindowChrome()
         background.z = background.z * (1.0f - dim.w) + dim.z * dim.w;
     }
     draw->AddRectFilled({0, 0}, {width, h}, ImGui::ColorConvertFloat4ToU32(background));
+    draw->AddLine({0, h - 1}, {width, h - 1}, ImGui::GetColorU32(ImGuiCol_Separator));
     draw->AddText({h * 0.5f, (h - ImGui::GetFontSize()) * 0.5f},
-                  ImGui::GetColorU32(ImGuiCol_TextDisabled), "Sony Headphones");
+                  ImGui::GetColorU32(ImGuiCol_Text), "Sony Headphones");
     float mx, my;
     SDL_GetMouseState(&mx, &my);
     const int hovered = (SDL_GetWindowFlags(gWindow) & SDL_WINDOW_MOUSE_FOCUS) ? ChromeButton(mx, my) : -1;
