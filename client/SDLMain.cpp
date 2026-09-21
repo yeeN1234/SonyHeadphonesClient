@@ -564,6 +564,8 @@ int main(int argc, char** argv)
     style.ScrollbarRounding = 8.0f;
     style.WindowBorderSize = 0.0f;
     style.ChildBorderSize = 1.0f;
+    style.SeparatorTextBorderSize = 0.0f; // Section headings are plain labels, not ruled lines
+    style.SeparatorTextPadding = ImVec2(0.0f, 8.0f);
     style.ScaleAllSizes(displayScale);
     style.FontScaleDpi = displayScale;
     style.CircleTessellationMaxError = 0.01f;

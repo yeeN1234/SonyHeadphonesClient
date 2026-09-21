@@ -908,7 +908,7 @@ void DrawListeningHero(const char* title, const char* subtitle)
     auto* draw = ImGui::GetWindowDrawList();
     const ImU32 accent = ImGui::GetColorU32(ImGuiCol_CheckMark);
     draw->AddRectFilled(start, start + ImVec2(width, height),
-                        MaterialYouTheme::ArgbToImU32(0xFFFFFFFF), unit * 1.5f);
+                        MaterialYouTheme::ArgbToImU32(0xFFE5F0FF), unit * 1.5f); // primaryContainer
     // Hide the illustration on narrow windows to leave room for the heading.
     const bool illustrated = width > unit * 25;
     if (illustrated)
@@ -916,7 +916,7 @@ void DrawListeningHero(const char* title, const char* subtitle)
         const float floatY = !compact && clientSettings().animations
             ? std::sin(static_cast<float>(ImGui::GetTime()) * 2.0f) * unit * 0.18f : 0.0f;
         const ImVec2 center = start + ImVec2(width - unit * 4, height * 0.5f + floatY);
-        draw->AddCircleFilled(center, unit * 2.8f, MaterialYouTheme::ArgbToImU32(0xFFF5F5F7));
+        draw->AddCircleFilled(center, unit * 2.8f, MaterialYouTheme::ArgbToImU32(0xFFFFFFFF));
         if (connState == CONN_STATE_CONNECTING)
         {
             const float phase = clientSettings().animations ? static_cast<float>(ImGui::GetTime()) * 3.0f : 0.0f;
@@ -960,6 +960,25 @@ void ImDrawSpinnerAt(ImVec2 center, float radius, ImU32 color, float thickness =
     auto* draw = ImGui::GetWindowDrawList();
     draw->PathArcTo(center, radius, angle, angle + 4.4f, 24);
     draw->PathStroke(color, 0, thickness);
+}
+
+// Draws text centered on `center`, turned by `angle` radians. The glyph quads are rotated in the
+// draw list after the fact, which lets a button's own icon spin instead of gaining a second spinner.
+void ImDrawTextRotated(ImVec2 center, ImU32 color, const char* text, float angle)
+{
+    auto* draw = ImGui::GetWindowDrawList();
+    const int first = draw->VtxBuffer.Size;
+    const ImVec2 size = ImGui::CalcTextSize(text);
+    draw->AddText(center - size * 0.5f, color, text);
+    if (angle == 0.0f)
+        return;
+    const float sn = std::sin(angle), cs = std::cos(angle);
+    for (int i = first; i < draw->VtxBuffer.Size; ++i)
+    {
+        ImVec2& p = draw->VtxBuffer[i].pos;
+        const float x = p.x - center.x, y = p.y - center.y;
+        p = ImVec2(x * cs - y * sn + center.x, x * sn + y * cs + center.y);
+    }
 }
 
 // Inline spinner that occupies one frame height and advances the cursor like a widget.
@@ -1211,8 +1230,13 @@ void DrawDeviceDiscovery()
         }
         ImGui::BeginDisabled(usingBLE);
         {
+            // Advanced option: a caption plus three small segments on one line, not a second row of pills.
             ImStylesRAII styles;
-            const std::array<const char*, 3> labels{tri(PSI_PLUS_SIGN, "Auto"), tri(PSI_FAST_FORWARD, "V2"), tri(PSI_FORWARD, "V1")};
+            styles.PushVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 3.0f));
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", tr("Protocol"));
+            ImGui::SameLine();
+            const std::array<const char*, 3> labels{tr("Auto"), "V2", "V1"};
             constexpr std::array tooltips{
                 "Auto-detect: tries the V2 (XM5+) service first and falls back to the legacy V1 service if it can't connect.",
                 "V2 only: connects to devices exposing the V2 MDR service (XM5+) - newer models like WH/WF-1000XM5.",
@@ -1223,7 +1247,9 @@ void DrawDeviceDiscovery()
                 ImStylesRAII buttonStyles;
                 if (deviceType != i)
                     buttonStyles.PushCol(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-                if (ImModalButton(labels[i], i, static_cast<int>(labels.size())))
+                if (i)
+                    ImGui::SameLine(0.0f, 2.0f);
+                if (ImGui::Button(labels[i], {ImGui::GetFontSize() * 4.0f, 0}))
                     deviceType = static_cast<DEVICE_TYPE>(i);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 {
@@ -1408,19 +1434,27 @@ void DrawDeviceDiscovery()
             static uint64_t refreshFeedbackUntilMs = 0;
             const bool refreshing = SDL_GetTicks() < refreshFeedbackUntilMs;
             ImGui::BeginDisabled(refreshing);
-            if (ImModalButton(refreshing ? tri(PSI_REFRESH, "Refreshing...") : tri(PSI_REFRESH, "Refresh")))
+            if (ImModalButton("##Refresh"))
             {
                 RefreshDeviceList();
                 refreshFeedbackUntilMs = SDL_GetTicks() + 900;
             }
-            ImGui::EndDisabled(); // refreshing
-            if (refreshing)
             {
-                const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
-                const float radius = ImGui::GetFontSize() * 0.4f;
-                ImDrawSpinnerAt(ImVec2(min.x + (max.y - min.y) * 0.5f, (min.y + max.y) * 0.5f), radius,
-                                ImGui::GetColorU32(ImGuiCol_Text));
+                // Label drawn by hand: while a refresh is in flight its icon turns in place.
+                const char* label = tr(refreshing ? "Refreshing..." : "Refresh");
+                const ImVec2 center = (ImGui::GetItemRectMin() + ImGui::GetItemRectMax()) * 0.5f;
+                const float iconWidth = ImGui::CalcTextSize(PSI_REFRESH).x;
+                const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
+                const ImVec2 labelSize = ImGui::CalcTextSize(label);
+                const float left = center.x - (iconWidth + gap + labelSize.x) * 0.5f;
+                const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+                const float angle = refreshing && clientSettings().animations
+                    ? static_cast<float>(ImGui::GetTime()) * 6.0f : 0.0f;
+                ImDrawTextRotated({left + iconWidth * 0.5f, center.y}, color, PSI_REFRESH, angle);
+                ImGui::GetWindowDrawList()->AddText({left + iconWidth + gap, center.y - labelSize.y * 0.5f},
+                                                    color, label);
             }
+            ImGui::EndDisabled(); // refreshing
             ImGui::EndDisabled(); // reconnecting
         };
         if (connInitResult != MDR_RESULT_OK && connInitResult != MDR_RESULT_INPROGRESS)
@@ -1438,21 +1472,18 @@ void DrawDeviceDiscovery()
             ImGui::TreePop();
         }
         ImGui::Separator();
-        ImGui::TextDisabled(tr("SonyHeadphonesClient  /  %s"), CLIENT_VERSION);
+        {
+            ImStylesRAII styles;
+            styles.PushFont(nullptr, ImGui::GetFontSize() * 0.85f);
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", mdr::Format("SonyHeadphonesClient {}  \u00b7  {}", CLIENT_VERSION,
+                                                  tr("Independent client. Not affiliated with Sony. Use at your own risk."))
+                                          .c_str());
+            ImGui::PopTextWrapPos();
+        }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(tr("Branch: %s\nCommit: %s\n%s (%s)"), MDR_GIT_BRANCH_NAME,
                               MDR_GIT_COMMIT_HASH, MDR_PLATFORM_OS, MDR_PLATFORM_PROCESSOR);
-        // Language picker right on the first screen so it is discoverable without digging.
-        {
-            const float comboWidth = ImGui::GetFontSize() * 8.0f;
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - comboWidth);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 2.0f));
-            DrawLanguageCombo("##FooterLanguage", comboWidth);
-            ImGui::PopStyleVar();
-        }
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled(tr("Independent client. Not affiliated with Sony. Use at your own risk."));
-        ImGui::PopTextWrapPos();
 #ifdef MDR_CLIENT_DEBUGGER
         ImGui::Separator();
         if (ImModalButton(tr("Protocol Debugger")))

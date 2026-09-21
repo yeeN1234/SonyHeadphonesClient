@@ -127,6 +127,7 @@
 {"Power off when removed", "取下時關機"},
 {"Preset", "預設組合"},
 {"Prev", "上一首"},
+{"Protocol", "協定版本"},
 {"Protocol Debugger", "協定除錯器"},
 {"Quick Access", "快速存取"},
 {"R&B/Hip-Hop", "R&B / 嘻哈"},
