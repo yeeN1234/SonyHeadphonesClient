@@ -985,6 +985,134 @@ void DrawLanguageCombo(const char* id, float width)
     }
 }
 
+#pragma region Close Prompt
+// Whether the close button minimizes or quits. Drawn as a modal stacked on top of whichever
+// modal the current screen already owns, so it is opened from inside that modal's block:
+// opening it at the top level would close the screen underneath instead of layering over it.
+extern bool gShouldClose;       // SDLMain.cpp
+extern bool gCloseAskPending;   // SDLMain.cpp
+extern void clientHideToTray(); // SDLMain.cpp
+
+namespace
+{
+    constexpr const char* kClosePromptId = "##ClosePrompt";
+    bool gClosePromptDrawn = false;    // Reset each frame; the first call site owns the prompt
+    bool gClosePromptOpened = false;
+    bool gClosePromptRemember = false;
+}
+
+void ClosePromptFinish(int action)
+{
+    if (action != CLIENT_CLOSE_ASK && gClosePromptRemember)
+    {
+        clientSettings().closeAction = action;
+        clientSettingsSave();
+    }
+    gCloseAskPending = false;
+    gClosePromptOpened = false;
+    gClosePromptRemember = false;
+    ImGui::CloseCurrentPopup();
+    if (action == CLIENT_CLOSE_EXIT)
+        gShouldClose = true;
+    else if (action == CLIENT_CLOSE_MINIMIZE)
+        clientHideToTray();
+}
+
+// One choice: icon and title on the first line, a muted explanation wrapped underneath.
+bool ClosePromptOption(const char* icon, const char* title, const char* hint, bool suggested)
+{
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float indent = style.FramePadding.x * 2;
+    const float wrapWidth = std::max(1.0f, width - indent * 2);
+    const mdr::String heading = mdr::Format("{}  {}", icon, title);
+    const float headingHeight = ImGui::GetTextLineHeight();
+    const ImVec2 hintSize = ImGui::CalcTextSize(hint, nullptr, false, wrapWidth);
+    const float height = headingHeight + style.ItemInnerSpacing.y + hintSize.y + style.FramePadding.y * 2;
+
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    ImGui::PushID(title);
+    bool pressed;
+    {
+        ImStylesRAII styles;
+        styles.PushCol(ImGuiCol_Button,
+                       ImGui::GetStyleColorVec4(suggested ? ImGuiCol_ButtonHovered : ImGuiCol_FrameBg));
+        pressed = ImGui::Button("##option", {width, height});
+    }
+    ImGui::PopID();
+
+    auto* draw = ImGui::GetWindowDrawList();
+    const float x = start.x + indent;
+    draw->AddText({x, start.y + style.FramePadding.y}, ImGui::GetColorU32(ImGuiCol_Text), heading.c_str());
+    draw->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                  {x, start.y + style.FramePadding.y + headingHeight + style.ItemInnerSpacing.y},
+                  ImGui::GetColorU32(ImGuiCol_TextDisabled), hint, nullptr, wrapWidth);
+    return pressed;
+}
+
+void DrawClosePrompt()
+{
+    if (!gCloseAskPending || gClosePromptDrawn)
+        return;
+    gClosePromptDrawn = true;
+    if (!gClosePromptOpened)
+    {
+        ImGui::OpenPopup(kClosePromptId);
+        gClosePromptOpened = true;
+    }
+    // Narrower than the screen-sized modals, and opaque: this one stacks over another sheet,
+    // and two translucent layers make the text underneath bleed through.
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float margin = std::max(ImGui::GetStyle().WindowPadding.x, clientWindowChromeHeight());
+    const float promptWidth = std::max(1.0f, std::min(display.x - margin * 2, ImGui::GetFontSize() * 30));
+    ImGui::SetNextWindowPos(display * 0.5f, ImGuiCond_Always, {0.5f, 0.5f});
+    ImGui::SetNextWindowSize({promptWidth, 0});
+    ImGui::PushStyleColor(ImGuiCol_PopupBg,
+                          MaterialYouTheme::ArgbToImVec4(MaterialYouTheme::FixedSurfaceColors::surfaceContainerLow));
+    ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.45f));
+    const bool promptVisible = ImGui::BeginPopupModal(kClosePromptId, nullptr, kImWindowFlagsTopMost);
+    ImGui::PopStyleColor(2); // Both are only read while the window is being begun
+    if (promptVisible)
+    {
+        const float spacing = ImGui::GetStyle().ItemSpacing.y;
+        {
+            ImStylesRAII styles;
+            styles.PushFont(nullptr, ImGui::GetFontSize() * 1.35f);
+            ImTextCentered(tr("Close the window?"));
+        }
+        ImGui::Dummy({0, spacing});
+        // Decide first, act once: each option closes the popup, so two of them must not both fire.
+        int chosen = -1;
+        if (ClosePromptOption(PSI_RESIZE_SMALL, tr("Minimize to the system tray"),
+                              tr("Keeps running in the background and stays connected to your headphones."), true))
+            chosen = CLIENT_CLOSE_MINIMIZE;
+        if (ClosePromptOption(PSI_OFF, tr("Exit the app"),
+                              tr("Disconnects from your headphones and closes the app."), false))
+            chosen = CLIENT_CLOSE_EXIT;
+        ImGui::Dummy({0, spacing});
+        ImGui::Checkbox(tr("Remember my choice"), &gClosePromptRemember);
+        ImGui::SameLine();
+        const float cancelWidth = ImGui::CalcTextSize(tr("Cancel")).x + ImGui::GetStyle().FramePadding.x * 4;
+        const float lineAvail = ImGui::GetContentRegionAvail().x;
+        if (lineAvail > cancelWidth)
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + lineAvail - cancelWidth);
+        // ImGui only closes a modal on Escape while it owns keyboard nav, so handle it here too.
+        if (ImGui::Button(tr("Cancel"), {cancelWidth, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            chosen = CLIENT_CLOSE_ASK; // Back out: the window stays as it is
+        if (chosen >= 0)
+            ClosePromptFinish(chosen);
+        ImGui::EndPopup();
+    }
+    else if (gClosePromptOpened)
+    {
+        // Escape, or the screen underneath changed and took the popup stack with it: do nothing.
+        gClosePromptOpened = false;
+        gClosePromptRemember = false;
+        gCloseAskPending = false;
+    }
+}
+#pragma endregion
+
 void DrawAppSettings()
 {
     ClientSettings& settings = clientSettings();
@@ -993,8 +1121,23 @@ void DrawAppSettings()
     if (ImGui::Checkbox(tr("Connection notifications"), &settings.notifications))
         clientSettingsSave();
     DrawLanguageCombo(tr("Language"), ImGui::GetFontSize() * 12.0f);
-    if (ImGui::Checkbox(tr("Keep running in the system tray when the window is closed"), &settings.closeToTray))
-        clientSettingsSave();
+    {
+        constexpr int kCloseActions[] = {CLIENT_CLOSE_ASK, CLIENT_CLOSE_MINIMIZE, CLIENT_CLOSE_EXIT};
+        auto closeActionName = [](int action)
+        {
+            return action == CLIENT_CLOSE_MINIMIZE ? tr("Minimize to the system tray")
+                : action == CLIENT_CLOSE_EXIT ? tr("Exit the app")
+                : tr("Ask every time");
+        };
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+        if (ImGui::BeginCombo(tr("Close button"), closeActionName(settings.closeAction)))
+        {
+            for (const int action : kCloseActions)
+                if (ImGui::Selectable(closeActionName(action), action == settings.closeAction))
+                    settings.closeAction = action, clientSettingsSave();
+            ImGui::EndCombo();
+        }
+    }
     ImGui::BeginDisabled(!clientPlatformAutoStartSupported());
     if (ImGui::Checkbox(tr("Start with Windows (minimized to the tray)"), &settings.autoStart))
     {
@@ -1319,6 +1462,7 @@ void DrawDeviceDiscovery()
                 ImGui::TextWrapped(tr("Packet export: %s"), exportStatus);
         }
 #endif
+        DrawClosePrompt();
         ImGui::EndPopup();
     }
     else
@@ -1415,6 +1559,7 @@ void DrawDeviceConnecting()
                     connectionAttempt = {};
                     connState = CONN_STATE_NO_CONNECTION;
                 }
+                DrawClosePrompt();
                 ImGui::EndPopup();
             }
             else
@@ -2569,6 +2714,7 @@ void DrawApp()
             DrawDeviceDisconnect();
             break;
         }
+        DrawClosePrompt(); // No-op when a screen above already stacked it
     }
     ImGui::End();
     DrawConnectionNotification();
@@ -2749,6 +2895,7 @@ bool clientShouldExit()
     // and can lead to very, very bad results. Check them here too to ensure than this TU got the correct ones.
     IMGUI_CHECKVERSION();
     bool exitRequested = false;
+    gClosePromptDrawn = false;
     ProcessTrayEvents(exitRequested); // Before DrawApp so a staged mode change commits this frame
     DrawApp();
     SyncTray();

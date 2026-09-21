@@ -20,6 +20,11 @@ namespace
         return path + "settings.ini";
     }
 
+    // Legacy migration: settings written before the close prompt existed only had a boolean.
+    bool gSawCloseAction = false;
+    bool gSawLegacyCloseToTray = false;
+    bool gLegacyCloseToTray = true;
+
     void Apply(const std::string& key, const std::string& value)
     {
         auto asBool = [&] { return value == "1" || value == "true"; };
@@ -27,7 +32,8 @@ namespace
         else if (key == "last_device_name") gSettings.lastDeviceName = value;
         else if (key == "last_device_protocol") gSettings.lastDeviceProtocol = std::atoi(value.c_str());
         else if (key == "last_device_ble") gSettings.lastDeviceBLE = asBool();
-        else if (key == "close_to_tray") gSettings.closeToTray = asBool();
+        else if (key == "close_action") gSettings.closeAction = std::atoi(value.c_str()), gSawCloseAction = true;
+        else if (key == "close_to_tray") gLegacyCloseToTray = asBool(), gSawLegacyCloseToTray = true;
         else if (key == "animations") gSettings.animations = asBool();
         else if (key == "notifications") gSettings.notifications = asBool();
         else if (key == "auto_start") gSettings.autoStart = asBool();
@@ -70,6 +76,10 @@ void clientSettingsLoad()
             continue;
         Apply(line.substr(0, eq), line.substr(eq + 1));
     }
+    // Settings written before the close prompt existed: someone who had turned the tray off
+    // wanted the close button to quit, so keep that rather than starting to ask them.
+    if (!gSawCloseAction && gSawLegacyCloseToTray && !gLegacyCloseToTray)
+        gSettings.closeAction = CLIENT_CLOSE_EXIT;
 }
 
 void clientSettingsSave()
@@ -84,7 +94,7 @@ void clientSettingsSave()
     out += "last_device_name=" + gSettings.lastDeviceName + "\n";
     out += "last_device_protocol=" + std::to_string(gSettings.lastDeviceProtocol) + "\n";
     out += std::string("last_device_ble=") + (gSettings.lastDeviceBLE ? "1" : "0") + "\n";
-    out += std::string("close_to_tray=") + (gSettings.closeToTray ? "1" : "0") + "\n";
+    out += "close_action=" + std::to_string(gSettings.closeAction) + "\n";
     out += std::string("auto_start=") + (gSettings.autoStart ? "1" : "0") + "\n";
     out += std::string("tray_hint_shown=") + (gSettings.trayHintShown ? "1" : "0") + "\n";
     out += std::string("animations=") + (gSettings.animations ? "1" : "0") + "\n";

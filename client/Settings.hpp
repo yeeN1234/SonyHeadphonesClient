@@ -1,6 +1,14 @@
 #pragma once
 #include <string>
 
+/** What the window's close button does. */
+enum ClientCloseAction
+{
+    CLIENT_CLOSE_ASK = 0,      // Prompt, with an option to remember the answer
+    CLIENT_CLOSE_MINIMIZE = 1, // Hide to the system tray, keep running
+    CLIENT_CLOSE_EXIT = 2,     // Quit the app
+};
+
 /**
  * Persistent client preferences. Stored as a small key=value file in SDL's preference
  * directory (e.g. %APPDATA%\SonyHeadphonesClient\settings.ini on Windows).
@@ -13,7 +21,7 @@ struct ClientSettings
     int lastDeviceProtocol = 0; // 0 unknown, 1 = V1, 2 = V2
     bool lastDeviceBLE = false;
     // Behaviour
-    bool closeToTray = true;
+    int closeAction = CLIENT_CLOSE_ASK;
     bool autoStart = false;
     bool animations = true;
     bool notifications = true;

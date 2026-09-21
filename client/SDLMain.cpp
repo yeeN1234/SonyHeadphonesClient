@@ -41,20 +41,16 @@ extern void clientEnterDebuggerReplayMode();
 
 bool gShouldClose = false;
 bool gTrayAvailable = false;
+// Set when the close button needs an answer; Client.cpp draws the prompt in the app's own style.
+bool gCloseAskPending = false;
 
 SDL_Window* gWindow = nullptr;
 SDL_Renderer* gRenderer = nullptr;
 
-// Close button: hide to the tray when enabled and a tray icon exists, otherwise quit.
-static void HandleCloseRequested()
+void clientHideToTray()
 {
-    ClientSettings& settings = clientSettings();
-    if (!(settings.closeToTray && gTrayAvailable))
-    {
-        gShouldClose = true;
-        return;
-    }
     SDL_HideWindow(gWindow);
+    ClientSettings& settings = clientSettings();
     if (!settings.trayHintShown)
     {
         clientPlatformTrayNotify("SonyHeadphonesClient",
@@ -64,17 +60,57 @@ static void HandleCloseRequested()
     }
 }
 
-#ifdef _WIN32
-static bool ConfigureGlassWindow()
+// Close button: minimize to the tray, quit, or ask - whichever the settings say.
+static void HandleCloseRequested()
 {
-    HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(SDL_GetWindowProperties(gWindow),
-                                                        SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
-    if (!hwnd) return false;
-    // Extending DWM glass can resurrect native caption buttons on SDL's borderless window.
-    // Our SDL controls already provide these actions, so suppress the native system menu.
-    SetWindowLongPtrW(hwnd, GWL_STYLE, GetWindowLongPtrW(hwnd, GWL_STYLE) & ~WS_SYSMENU);
+    ClientSettings& settings = clientSettings();
+    if (!gTrayAvailable) // Nowhere to minimize to
+    {
+        gShouldClose = true;
+        return;
+    }
+    if (settings.closeAction == CLIENT_CLOSE_MINIMIZE)
+    {
+        clientHideToTray();
+        return;
+    }
+    if (settings.closeAction == CLIENT_CLOSE_EXIT)
+    {
+        gShouldClose = true;
+        return;
+    }
+    gCloseAskPending = true; // Answered by the in-app prompt
+}
+
+#ifdef _WIN32
+static HWND NativeWindowHandle()
+{
+    return static_cast<HWND>(SDL_GetPointerProperty(SDL_GetWindowProperties(gWindow),
+                                                    SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+}
+
+// Extending DWM glass resurrects the native caption buttons on SDL's borderless window, and our
+// own chrome already provides those actions. SDL puts WS_SYSMENU back whenever it re-applies the
+// window style - showing the window again after the tray hides it, restoring, maximizing - so this
+// is checked every frame rather than only at startup, and costs one style read when nothing changed.
+static void SuppressNativeCaption()
+{
+    HWND hwnd = NativeWindowHandle();
+    if (!hwnd)
+        return;
+    const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+    if (!(style & WS_SYSMENU))
+        return;
+    SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~WS_SYSMENU);
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+}
+
+static bool ConfigureGlassWindow()
+{
+    HWND hwnd = NativeWindowHandle();
+    if (!hwnd) return false;
+    SuppressNativeCaption();
     // Numeric attribute values keep compilation compatible with older Windows SDKs.
     const DWORD round = 2; // DWMWCP_ROUND
     DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &round, sizeof(round));
@@ -180,6 +216,9 @@ static void DrawWindowChrome()
 void mainLoop()
 {
     ImGuiIO& io = ImGui::GetIO();
+#ifdef _WIN32
+    SuppressNativeCaption();
+#endif
     SDL_Event event;
     while (SDL_PollEvent(&event))
     {
@@ -275,7 +314,11 @@ void mainLoop()
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
     }    
-    gShouldClose |= clientShouldExit();
+    // Call first, then read the flag: the prompt inside can set gShouldClose during this call.
+    const bool exitRequested = clientShouldExit();
+    if (exitRequested)
+        gShouldClose = true;
+
 #ifdef _WIN32
     DrawWindowChrome();
 #endif
