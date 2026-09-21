@@ -9,6 +9,14 @@ enum ClientCloseAction
     CLIENT_CLOSE_EXIT = 2,     // Quit the app
 };
 
+/** How much of the desktop shows through the app's glass surfaces. */
+enum ClientGlassLevel
+{
+    CLIENT_GLASS_OFF = 0,     // Opaque surfaces; no backdrop blur
+    CLIENT_GLASS_REGULAR = 1, // Frosted glass, legible by default
+    CLIENT_GLASS_CLEAR = 2,   // More of the desktop shows through
+};
+
 /**
  * Persistent client preferences. Stored as a small key=value file in SDL's preference
  * directory (e.g. %APPDATA%\SonyHeadphonesClient\settings.ini on Windows).
@@ -27,6 +35,7 @@ struct ClientSettings
     bool notifications = true;
     bool trayHintShown = false;
     int language = 0; // ClientLanguage: 0 auto, 1 English, 2 Traditional Chinese
+    int glassLevel = CLIENT_GLASS_REGULAR;
 };
 
 ClientSettings& clientSettings();

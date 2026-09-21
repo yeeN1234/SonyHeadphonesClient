@@ -7,8 +7,27 @@ namespace MaterialYouTheme {
 
 using Argb = uint32_t;
 
+// Kept in step with ClientGlassLevel without dragging Settings.hpp into the theme header.
+constexpr int CLIENT_GLASS_CLEAR_LEVEL = 2;
+
 // Set only after the native compositor accepts the acrylic backdrop.
 inline bool glassEnabled = false;
+// ClientGlassLevel, mirrored from the settings before Apply() runs: 0 off, 1 regular, 2 clear.
+inline int glassLevel = 1;
+
+inline bool glassActive() { return glassEnabled && glassLevel > 0; }
+
+// Apple's two glass variants: regular glass stays legible on its own, clear glass lets more of
+// the desktop through. iOS 27 dials the default back towards regular for readability.
+inline float glassAlpha(float regular = 0.80f, float clear = 0.62f) {
+    if (!glassActive()) return 1.0f;
+    return glassLevel >= CLIENT_GLASS_CLEAR_LEVEL ? clear : regular;
+}
+
+// iOS 27 adds a darkened outer edge for separation and a brighter specular highlight on the lit
+// (top) edge. Together they read as a pane of glass rather than a flat translucent rectangle.
+inline ImU32 glassEdgeShadow() { return IM_COL32(0, 0, 0, glassActive() ? 28 : 16); }
+inline ImU32 glassEdgeHighlight() { return IM_COL32(255, 255, 255, glassActive() ? 190 : 120); }
 
 inline ImVec4 ArgbToImVec4(Argb argb) {
     return ImVec4(
@@ -75,9 +94,10 @@ inline void Apply(const Theme&) {
     ImVec4* c = style.Colors;
 
     // Fixed surface colors (Sony standard)
-    c[ImGuiCol_WindowBg]        = ArgbToImVec4(FixedSurfaceColors::surface); // Opaque: the chrome shares it
+    c[ImGuiCol_WindowBg]        = ArgbToImVec4(FixedSurfaceColors::surface, glassAlpha());
     c[ImGuiCol_ChildBg]         = ArgbToImVec4(FixedSurfaceColors::surface, 0.0f);
-    c[ImGuiCol_PopupBg]         = ArgbToImVec4(FixedSurfaceColors::surfaceContainerLow, glassEnabled ? 0.82f : 1.0f);
+    // Opaque: menus and dropdowns sit over app content, which no compositor blurs for us.
+    c[ImGuiCol_PopupBg]         = ArgbToImVec4(FixedSurfaceColors::surfaceContainerLow);
     c[ImGuiCol_MenuBarBg]       = ArgbToImVec4(FixedSurfaceColors::surfaceContainerHigh);
     c[ImGuiCol_ScrollbarBg]     = ArgbToImVec4(FixedSurfaceColors::surface, 0.5f);
     c[ImGuiCol_TableRowBg]      = ArgbToImVec4(FixedSurfaceColors::surface, 0.0f);
@@ -103,6 +123,8 @@ inline void Apply(const Theme&) {
     c[ImGuiCol_TableBorderLight] = ArgbToImVec4(FixedSurfaceColors::outlineVariant);
 
     // Frame backgrounds: primary tint with increasing opacity
+    // Opaque. A translucent control frame disappears against the white sheets it also sits on
+    // (the close prompt, menus), taking the checkbox box and the combo outline with it.
     c[ImGuiCol_FrameBg]          = ArgbToImVec4(FixedSurfaceColors::surfaceContainerHighest);
     c[ImGuiCol_FrameBgHovered]   = ArgbToImVec4(theme.primary, 0.24f);
     c[ImGuiCol_FrameBgActive]    = ArgbToImVec4(theme.primary, 0.35f);

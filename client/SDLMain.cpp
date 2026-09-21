@@ -35,12 +35,15 @@
 // Implemented by Client.cpp
 extern bool clientShouldExit();
 extern void clientShutdown();
+extern void clientReapplyTheme();
 #ifdef MDR_CLIENT_DEBUGGER
 extern void clientEnterDebuggerReplayMode();
 #endif
 
 bool gShouldClose = false;
 bool gTrayAvailable = false;
+// Set by the UI each frame: the window chrome only grows a separator once content slides under it.
+bool gContentScrolled = false;
 // Set when the close button needs an answer; Client.cpp draws the prompt in the app's own style.
 bool gCloseAskPending = false;
 
@@ -114,9 +117,10 @@ static bool ConfigureGlassWindow()
     // Numeric attribute values keep compilation compatible with older Windows SDKs.
     const DWORD round = 2; // DWMWCP_ROUND
     DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &round, sizeof(round));
-    const DWORD acrylic = 3; // DWMSBT_TRANSIENTWINDOW (Windows 11 22H2+)
+    // DWMSBT_NONE = 1, DWMSBT_TRANSIENTWINDOW (acrylic) = 3. Acrylic is the blur behind the app.
+    const DWORD backdrop = clientSettings().glassLevel == CLIENT_GLASS_OFF ? 1u : 3u;
     const HRESULT result = DwmSetWindowAttribute(hwnd, 38 /* DWMWA_SYSTEMBACKDROP_TYPE */,
-                                                &acrylic, sizeof(acrylic));
+                                                &backdrop, sizeof(backdrop));
     if (FAILED(result))
     {
         SDL_Log("Acrylic backdrop unavailable; using opaque surfaces (0x%lx)", static_cast<unsigned long>(result));
@@ -126,6 +130,16 @@ static bool ConfigureGlassWindow()
     return SUCCEEDED(DwmExtendFrameIntoClientArea(hwnd, &margins));
 }
 #endif
+
+// Called when the transparency setting changes so the backdrop and the surface alphas agree.
+void clientRefreshWindowBackdrop()
+{
+#ifdef _WIN32
+    MaterialYouTheme::glassEnabled = ConfigureGlassWindow();
+#endif
+    MaterialYouTheme::glassLevel = clientSettings().glassLevel;
+    clientReapplyTheme();
+}
 
 // Custom Windows chrome uses SDL hit testing so dragging/resizing remains native.
 float clientWindowChromeHeight()
@@ -183,7 +197,11 @@ static void DrawWindowChrome()
         background.z = background.z * (1.0f - dim.w) + dim.z * dim.w;
     }
     draw->AddRectFilled({0, 0}, {width, h}, ImGui::ColorConvertFloat4ToU32(background));
-    draw->AddLine({0, h - 1}, {width, h - 1}, ImGui::GetColorU32(ImGuiCol_Separator));
+    // The lit top edge of the pane, inset so it stops at the compositor's rounded corners.
+    draw->AddLine({8.0f, 0.5f}, {width - 8.0f, 0.5f}, MaterialYouTheme::glassEdgeHighlight());
+    // Liquid Glass toolbars stay borderless until content scrolls underneath them.
+    if (gContentScrolled)
+        draw->AddLine({0, h - 0.5f}, {width, h - 0.5f}, MaterialYouTheme::glassEdgeShadow());
     draw->AddText({h * 0.5f, (h - ImGui::GetFontSize()) * 0.5f},
                   ImGui::GetColorU32(ImGuiCol_Text), "Sony Headphones");
     float mx, my;
@@ -556,19 +574,21 @@ int main(int argc, char** argv)
 #ifdef _WIN32
     MaterialYouTheme::glassEnabled = ConfigureGlassWindow();
 #endif
+    MaterialYouTheme::glassLevel = clientSettings().glassLevel;
     MaterialYouTheme::ApplyDefault();
     auto& style = ImGui::GetStyle();
+    // Spacing on Apple's 8pt grid; radii follow its container / control / detail hierarchy.
     style.WindowPadding = ImVec2(24.0f, 20.0f);
-    style.FramePadding = ImVec2(12.0f, 9.0f);
-    style.ItemSpacing = ImVec2(10.0f, 12.0f);
-    style.ItemInnerSpacing = ImVec2(8.0f, 6.0f);
+    style.FramePadding = ImVec2(16.0f, 12.0f); // 40pt controls, close to the 44pt hit target
+    style.ItemSpacing = ImVec2(8.0f, 12.0f);
+    style.ItemInnerSpacing = ImVec2(8.0f, 8.0f);
     style.CellPadding = ImVec2(12.0f, 8.0f);
-    style.WindowRounding = 24.0f;
-    style.ChildRounding = 18.0f;
-    style.PopupRounding = 12.0f;
-    style.FrameRounding = 10.0f;
+    style.WindowRounding = 16.0f;
+    style.ChildRounding = 16.0f;
+    style.PopupRounding = 16.0f;
+    style.FrameRounding = 12.0f;
     style.GrabRounding = 8.0f;
-    style.TabRounding = 8.0f;
+    style.TabRounding = 12.0f;
     style.ScrollbarSize = 10.0f;
     style.ScrollbarRounding = 8.0f;
     style.WindowBorderSize = 0.0f;

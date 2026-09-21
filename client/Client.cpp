@@ -610,6 +610,17 @@ void ImSpinner(float interval, float size, int color, float thickness = 1.0f, bo
     ImGui::Dummy({sqrt(2.0f) * size, sqrt(2.0f) * size + style.FramePadding.y * 2.0f});
 }
 
+// A checkbox is sized from the frame padding, so the 40pt control height would turn it into a
+// block. Apple keeps selection controls smaller than buttons; this does the same.
+bool ImCheckbox(const char* label, bool* value)
+{
+    const ImVec2 padding = ImGui::GetStyle().FramePadding;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(padding.x, padding.y * 0.5f));
+    const bool changed = ImGui::Checkbox(label, value);
+    ImGui::PopStyleVar();
+    return changed;
+}
+
 // Fill the available horizontal region with lineTotal amount of buttons
 // This is used for modal dialogues
 bool ImModalButton(const char* label, int lineIndex = 0, int lineTotal = 1)
@@ -626,13 +637,17 @@ bool ImModalButton(const char* label, int lineIndex = 0, int lineTotal = 1)
 // The discovery and connecting screens are drawn straight on the window surface as a centred,
 // scrollable column. They used to be modals, which put a second rounded card (with its own
 // background and a dark gutter) inside the already custom-framed window.
+extern bool gContentScrolled; // SDLMain.cpp
 bool ImBeginScreenColumn(const char* id)
 {
     const float avail = ImGui::GetContentRegionAvail().x;
     const float width = std::max(1.0f, std::min(avail, ImGui::GetFontSize() * 44));
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - width) * 0.5f);
-    return ImGui::BeginChild(id, {width, 0}, ImGuiChildFlags_AlwaysUseWindowPadding,
-                             ImGuiWindowFlags_NoBackground);
+    const bool open = ImGui::BeginChild(id, {width, 0}, ImGuiChildFlags_AlwaysUseWindowPadding,
+                                        ImGuiWindowFlags_NoBackground);
+    if (open)
+        gContentScrolled = ImGui::GetScrollY() > 1.0f;
+    return open;
 }
 
 extern float clientWindowChromeHeight();
@@ -897,6 +912,35 @@ MDRResult StartConnection(
 }
 #pragma endregion
 
+// A pane of Liquid Glass: a diffused fill, a darkened outer edge that separates it from whatever
+// shows through, and a bright specular highlight along the lit (top) edge. The edge pair is what
+// iOS 27 added to keep glass readable over busy content, and it is what stops a translucent
+// rectangle from looking like a flat wash of colour.
+void ImGlassEdges(ImVec2 min, ImVec2 max, float rounding)
+{
+    auto* draw = ImGui::GetWindowDrawList();
+    rounding = std::min(rounding, std::min(max.x - min.x, max.y - min.y) * 0.5f);
+    draw->AddRect(min, max, MaterialYouTheme::glassEdgeShadow(), rounding, 0, 1.0f);
+    if (rounding <= 0.0f)
+    {
+        draw->AddLine({min.x, min.y + 0.5f}, {max.x, min.y + 0.5f}, MaterialYouTheme::glassEdgeHighlight());
+        return;
+    }
+    draw->PathArcTo({min.x + rounding, min.y + rounding}, rounding, IM_PI, IM_PI * 1.5f, 12);
+    draw->PathArcTo({max.x - rounding, min.y + rounding}, rounding, IM_PI * 1.5f, IM_PI * 2.0f, 12);
+    draw->PathStroke(MaterialYouTheme::glassEdgeHighlight(), 0, 1.5f);
+}
+
+void ImGlassPanel(ImVec2 min, ImVec2 max, float rounding, ImU32 fill)
+{
+    ImGui::GetWindowDrawList()->AddRectFilled(
+        min, max, fill, std::min(rounding, std::min(max.x - min.x, max.y - min.y) * 0.5f));
+    ImGlassEdges(min, max, rounding);
+}
+
+// Pills: Liquid Glass controls are capsules, so push a rounding the widget will clamp to half its height.
+constexpr float kImCapsuleRounding = 1000.0f;
+
 // A small vector illustration stays crisp with the UI's DPI scale and model palette.
 void DrawListeningHero(const char* title, const char* subtitle)
 {
@@ -907,8 +951,9 @@ void DrawListeningHero(const char* title, const char* subtitle)
     const float height = unit * (compact ? 4.8f : 8.0f);
     auto* draw = ImGui::GetWindowDrawList();
     const ImU32 accent = ImGui::GetColorU32(ImGuiCol_CheckMark);
-    draw->AddRectFilled(start, start + ImVec2(width, height),
-                        MaterialYouTheme::ArgbToImU32(0xFFE5F0FF), unit * 1.5f); // primaryContainer
+    ImGlassPanel(start, start + ImVec2(width, height), unit * 1.5f,
+                 MaterialYouTheme::ArgbToImU32(0xFFE5F0FF, // primaryContainer
+                                               MaterialYouTheme::glassAlpha(0.88f, 0.74f)));
     // Hide the illustration on narrow windows to leave room for the heading.
     const bool illustrated = width > unit * 25;
     if (illustrated)
@@ -916,7 +961,8 @@ void DrawListeningHero(const char* title, const char* subtitle)
         const float floatY = !compact && clientSettings().animations
             ? std::sin(static_cast<float>(ImGui::GetTime()) * 2.0f) * unit * 0.18f : 0.0f;
         const ImVec2 center = start + ImVec2(width - unit * 4, height * 0.5f + floatY);
-        draw->AddCircleFilled(center, unit * 2.8f, MaterialYouTheme::ArgbToImU32(0xFFFFFFFF));
+        draw->AddCircleFilled(center, unit * 2.8f,
+                              MaterialYouTheme::ArgbToImU32(0xFFFFFFFF, MaterialYouTheme::glassAlpha(0.92f, 0.78f)));
         if (connState == CONN_STATE_CONNECTING)
         {
             const float phase = clientSettings().animations ? static_cast<float>(ImGui::GetTime()) * 3.0f : 0.0f;
@@ -1105,6 +1151,9 @@ void DrawClosePrompt()
     ImGui::PopStyleColor(2); // Both are only read while the window is being begun
     if (promptVisible)
     {
+        // The sheet is drawn by ImGui; add the edge pair that makes it read as glass.
+        ImGlassEdges(ImGui::GetWindowPos(), ImGui::GetWindowPos() + ImGui::GetWindowSize(),
+                     ImGui::GetStyle().PopupRounding);
         const float spacing = ImGui::GetStyle().ItemSpacing.y;
         {
             ImStylesRAII styles;
@@ -1121,7 +1170,7 @@ void DrawClosePrompt()
                               tr("Disconnects from your headphones and closes the app."), false))
             chosen = CLIENT_CLOSE_EXIT;
         ImGui::Dummy({0, spacing});
-        ImGui::Checkbox(tr("Remember my choice"), &gClosePromptRemember);
+        ImCheckbox(tr("Remember my choice"), &gClosePromptRemember);
         ImGui::SameLine();
         const float cancelWidth = ImGui::CalcTextSize(tr("Cancel")).x + ImGui::GetStyle().FramePadding.x * 4;
         const float lineAvail = ImGui::GetContentRegionAvail().x;
@@ -1144,14 +1193,36 @@ void DrawClosePrompt()
 }
 #pragma endregion
 
+extern void clientRefreshWindowBackdrop(); // SDLMain.cpp
 void DrawAppSettings()
 {
     ClientSettings& settings = clientSettings();
-    if (ImGui::Checkbox(tr("Interface animations"), &settings.animations))
+    if (ImCheckbox(tr("Interface animations"), &settings.animations))
         clientSettingsSave();
-    if (ImGui::Checkbox(tr("Connection notifications"), &settings.notifications))
+    if (ImCheckbox(tr("Connection notifications"), &settings.notifications))
         clientSettingsSave();
     DrawLanguageCombo(tr("Language"), ImGui::GetFontSize() * 12.0f);
+    {
+        // iOS 27 exposes the same choice: glass can be dialled from frosted to nearly clear, or off.
+        constexpr int kGlassLevels[] = {CLIENT_GLASS_OFF, CLIENT_GLASS_REGULAR, CLIENT_GLASS_CLEAR};
+        auto glassName = [](int level)
+        {
+            return level == CLIENT_GLASS_OFF ? tr("Off")
+                 : level == CLIENT_GLASS_CLEAR ? tr("See-through") : tr("Frosted");
+        };
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
+        if (ImGui::BeginCombo(tr("Window glass"), glassName(settings.glassLevel)))
+        {
+            for (int level : kGlassLevels)
+                if (ImGui::Selectable(glassName(level), settings.glassLevel == level))
+                {
+                    settings.glassLevel = level;
+                    clientSettingsSave();
+                    clientRefreshWindowBackdrop();
+                }
+            ImGui::EndCombo();
+        }
+    }
     {
         constexpr int kCloseActions[] = {CLIENT_CLOSE_ASK, CLIENT_CLOSE_MINIMIZE, CLIENT_CLOSE_EXIT};
         auto closeActionName = [](int action)
@@ -1170,7 +1241,7 @@ void DrawAppSettings()
         }
     }
     ImGui::BeginDisabled(!clientPlatformAutoStartSupported());
-    if (ImGui::Checkbox(tr("Start with Windows (minimized to the tray)"), &settings.autoStart))
+    if (ImCheckbox(tr("Start with Windows (minimized to the tray)"), &settings.autoStart))
     {
         if (!clientPlatformAutoStartSet(settings.autoStart ? 1 : 0))
             settings.autoStart = clientPlatformAutoStartGet() != 0;
@@ -1213,6 +1284,7 @@ void DrawDeviceDiscovery()
         bool needSwitchClientPlatform = clientPlatformConnectionGet() == nullptr;
         {
             ImStylesRAII styles;
+            styles.PushVar(ImGuiStyleVar_FrameRounding, kImCapsuleRounding);
             {
                 ImStylesRAII styles;
                 if (usingBLE)
@@ -1232,7 +1304,8 @@ void DrawDeviceDiscovery()
         {
             // Advanced option: a caption plus three small segments on one line, not a second row of pills.
             ImStylesRAII styles;
-            styles.PushVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 3.0f));
+            styles.PushVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 4.0f));
+            styles.PushVar(ImGuiStyleVar_FrameRounding, kImCapsuleRounding);
             ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("%s", tr("Protocol"));
             ImGui::SameLine();
@@ -1400,8 +1473,12 @@ void DrawDeviceDiscovery()
             std::span<MDRDeviceInfo> devices{pDeviceInfo, static_cast<size_t>(nDeviceInfo)};
             if (!devices.empty())
             {
-                ImGui::BeginChild("##DiscoveredDevices", {0, ImGui::GetFrameHeightWithSpacing() * std::min(3, nDeviceInfo)},
-                                  ImGuiChildFlags_None);
+                const float listHeight = ImGui::GetFrameHeightWithSpacing() * std::min(3, nDeviceInfo);
+                const ImVec2 listMin = ImGui::GetCursorScreenPos();
+                ImGlassPanel(listMin, listMin + ImVec2(ImGui::GetContentRegionAvail().x, listHeight),
+                             ImGui::GetStyle().ChildRounding,
+                             MaterialYouTheme::ArgbToImU32(0xFFFFFFFF, MaterialYouTheme::glassAlpha(0.55f, 0.34f)));
+                ImGui::BeginChild("##DiscoveredDevices", {0, listHeight}, ImGuiChildFlags_None);
                 for (const auto& device : devices)
                 {
                     ImGui::PushID(device.szDeviceMacAddress);
@@ -1434,6 +1511,8 @@ void DrawDeviceDiscovery()
             static uint64_t refreshFeedbackUntilMs = 0;
             const bool refreshing = SDL_GetTicks() < refreshFeedbackUntilMs;
             ImGui::BeginDisabled(refreshing);
+            ImStylesRAII refreshStyles;
+            refreshStyles.PushVar(ImGuiStyleVar_FrameRounding, kImCapsuleRounding);
             if (ImModalButton("##Refresh"))
             {
                 RefreshDeviceList();
@@ -1698,7 +1777,7 @@ void DrawDeviceControlsHeader()
         ImGui::TableNextColumn();
         ImGui::PushStyleColor(ImGuiCol_ChildBg,
             MaterialYouTheme::ArgbToImVec4(MaterialYouTheme::FixedSurfaceColors::surfaceContainerLow));
-        ImGui::BeginChild("##BatteryCard", {0, 0}, ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+        ImGui::BeginChild("##BatteryCard", {0, 0}, ImGuiChildFlags_AutoResizeY);
         ImGui::TextDisabled(tr("BATTERY"));
         bool hasBattery = false;
         for (const MDRBattery& battery : gState.mBatteries)
@@ -1726,8 +1805,9 @@ void DrawDeviceControlsHeader()
         if (!hasBattery)
             ImGui::TextDisabled(tr("Waiting for battery status"));
         ImGui::EndChild();
+        ImGlassEdges(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetStyle().ChildRounding);
         ImGui::TableNextColumn();
-        ImGui::BeginChild("##PlayingCard", {0, 0}, ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+        ImGui::BeginChild("##PlayingCard", {0, 0}, ImGuiChildFlags_AutoResizeY);
         ImGui::TextDisabled(tr("NOW PLAYING"));
         const auto title = GetText(MDR_TEXT_TRACK_TITLE);
         const auto artist = GetText(MDR_TEXT_TRACK_ARTIST);
@@ -1742,6 +1822,7 @@ void DrawDeviceControlsHeader()
             ImGui::TextDisabled(tr("Play something on your connected device."));
         ImGui::PopTextWrapPos();
         ImGui::EndChild();
+        ImGlassEdges(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetStyle().ChildRounding);
         ImGui::PopStyleColor();
         ImGui::EndTable();
     }
@@ -1856,7 +1937,7 @@ void DrawDeviceControlsSound()
             if (protocolVersion == MDR_PROTOCOL_V1)
             {
                 bool ncAsmEnabled = gState.mNoise.mode != MDR_NOISE_MODE_OFF;
-                if (ImGui::Checkbox(tr("Enabled"), &ncAsmEnabled))
+                if (ImCheckbox(tr("Enabled"), &ncAsmEnabled))
                     gState.mNoise.mode = ncAsmEnabled ? MDR_NOISE_MODE_V1_ON : MDR_NOISE_MODE_OFF, changed = true;
 
                 ImGui::BeginDisabled(!ncAsmEnabled);
@@ -1880,7 +1961,7 @@ void DrawDeviceControlsSound()
 
                 ImGui::BeginDisabled(sliderLevel < 1);
                 bool focusOnVoice = gState.mNoise.focus_on_voice != MDR_FALSE;
-                if (ImGui::Checkbox(tr("Voice Passthrough"), &focusOnVoice))
+                if (ImCheckbox(tr("Voice Passthrough"), &focusOnVoice))
                     gState.mNoise.focus_on_voice = focusOnVoice ? MDR_TRUE : MDR_FALSE, changed = true;
                 ImGui::EndDisabled(); // sliderLevel < 1
 
@@ -1925,7 +2006,7 @@ void DrawDeviceControlsSound()
                     if (supportAutoASM)
                     {
                         bool adaptive = gState.mNoise.adaptive_ambient != MDR_FALSE;
-                        if (ImGui::Checkbox(tr("Auto Ambient Sound"), &adaptive))
+                        if (ImCheckbox(tr("Auto Ambient Sound"), &adaptive))
                             gState.mNoise.adaptive_ambient = adaptive ? MDR_TRUE : MDR_FALSE, changed = true;
                         ImGui::BeginDisabled(!adaptive);
                         constexpr MDRAdaptiveSensitivity kSelections[] = {
@@ -1935,7 +2016,7 @@ void DrawDeviceControlsSound()
                         ImGui::EndDisabled(); // !adaptive
                     }
                     bool focusOnVoice = gState.mNoise.focus_on_voice != MDR_FALSE;
-                    if (ImGui::Checkbox(tr("Voice Passthrough"), &focusOnVoice))
+                    if (ImCheckbox(tr("Voice Passthrough"), &focusOnVoice))
                         gState.mNoise.focus_on_voice = focusOnVoice ? MDR_TRUE : MDR_FALSE, changed = true;
                     ImGui::EndDisabled(); // gState.mNoise.mode != MDR_NOISE_MODE_AMBIENT
                 }
@@ -1953,7 +2034,7 @@ void DrawDeviceControlsSound()
         {
             bool changed = false;
             bool enabled = gState.mSpeakToChat.enabled != MDR_FALSE;
-            if (ImGui::Checkbox(tr("Enabled"), &enabled))
+            if (ImCheckbox(tr("Enabled"), &enabled))
                 gState.mSpeakToChat.enabled = enabled ? MDR_TRUE : MDR_FALSE, changed = true;
             ImGui::BeginDisabled(!enabled);
             constexpr MDRSpeechSensitivity kSensitivity[] = {
@@ -2209,7 +2290,7 @@ void DrawDeviceControlsSystem()
             bool value = setting.boolean_value != MDR_FALSE;
             ImGui::PushID(static_cast<int>(info.index));
             ImGui::BeginDisabled(subjectKey.empty() || !info.writable);
-            if (ImGui::Checkbox(subject, &value))
+            if (ImCheckbox(subject, &value))
             {
                 setting.boolean_value = value ? MDR_TRUE : MDR_FALSE;
                 mdrHeadphonesSetGeneralSetting(gDevice, &setting);
@@ -2269,7 +2350,7 @@ void DrawDeviceControlsSystem()
         ImGui::TreeNodeEx(tr("Head Gesture"), ImGuiTreeNodeFlags_DefaultOpen))
     {
         bool enabled = power.head_gesture != MDR_FALSE;
-        if (ImGui::Checkbox(tr("Enabled"), &enabled) && havePower)
+        if (ImCheckbox(tr("Enabled"), &enabled) && havePower)
         {
             power.head_gesture = enabled ? MDR_TRUE : MDR_FALSE;
             mdrHeadphonesSetPower(gDevice, &power);
@@ -2286,7 +2367,7 @@ void DrawDeviceControlsSystem()
             power.wearing_power != MDR_WEARING_POWER_UNAVAILABLE)
         {
             bool whenRemoved = power.wearing_power == MDR_WEARING_POWER_WHEN_REMOVED;
-            if (ImGui::Checkbox(tr("Power off when removed"), &whenRemoved))
+            if (ImCheckbox(tr("Power off when removed"), &whenRemoved))
                 power.wearing_power =
                     whenRemoved ? MDR_WEARING_POWER_WHEN_REMOVED : MDR_WEARING_POWER_DISABLED, changed = true;
         }
@@ -2299,7 +2380,7 @@ void DrawDeviceControlsSystem()
         ImGui::TreeNodeEx(tr("Pause when removed"), ImGuiTreeNodeFlags_DefaultOpen))
     {
         bool enabled = power.auto_pause != MDR_FALSE;
-        if (ImGui::Checkbox(tr("Enabled"), &enabled) && havePower)
+        if (ImCheckbox(tr("Enabled"), &enabled) && havePower)
         {
             power.auto_pause = enabled ? MDR_TRUE : MDR_FALSE;
             mdrHeadphonesSetPower(gDevice, &power);
@@ -2315,7 +2396,7 @@ void DrawDeviceControlsSystem()
         {
             bool changed = false;
             bool enabled = voice.enabled != MDR_FALSE;
-            if (ImGui::Checkbox(tr("Enabled"), &enabled))
+            if (ImCheckbox(tr("Enabled"), &enabled))
                 voice.enabled = enabled ? MDR_TRUE : MDR_FALSE, changed = true;
             if (FeatureAvailable(MDR_FEATURE_VOICE_GUIDANCE_VOLUME))
             {
@@ -2549,10 +2630,11 @@ void DrawDeviceControls()
     if (!gDevice)
         return;
     ImGui::Separator();
-    ImGui::BeginChild("##ControlTabs", {0, 0}, ImGuiChildFlags_Borders);
+    ImGui::BeginChild("##ControlTabs", {0, 0}, ImGuiChildFlags_None);
     DrawDeviceControlsTabs();
     ImScrollWhenDraggingAnywhere(ImGui::GetIO().MouseDelta, ImGuiMouseButton_Left);
     ImGui::EndChild();
+    ImGlassEdges(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetStyle().ChildRounding);
 }
 
 void DrawDeviceDisconnect()
@@ -2687,6 +2769,15 @@ void DrawConnectionNotification()
                   IM_COL32(29, 29, 31, static_cast<int>(255 * alpha)), message.c_str(), nullptr, width - unit * 4.0f);
 }
 
+// The palette depends on the connected model, so the settings screen cannot just call ApplyDefault.
+void clientReapplyTheme()
+{
+    if (connState == CONN_STATE_CONNECTED && gDevice)
+        MaterialYouTheme::ApplyForModelColor(GetModelColor());
+    else
+        MaterialYouTheme::ApplyDefault();
+}
+
 void DrawApp()
 {
     auto& io = ImGui::GetIO();
@@ -2707,6 +2798,7 @@ void DrawApp()
 #endif
     if (connState == CONN_STATE_CONNECTED && gDevice)
         PollDevice();
+    gContentScrolled = false; // Set again by whichever screen owns a scrolling column
     ImGui::SetNextWindowPos({0, clientWindowChromeHeight()});
     ImGui::SetNextWindowSize({io.DisplaySize.x, io.DisplaySize.y - clientWindowChromeHeight()});
     ImGuiWindowFlags flags = kImWindowFlagsTopMost;
