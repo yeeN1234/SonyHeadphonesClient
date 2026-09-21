@@ -497,6 +497,7 @@ void CloseDevice()
     mdrHeadphonesDestroy(gDevice);
     gDevice = nullptr;
     gState = {};
+    clientPlatformSystemVolumeUnbind();
 }
 
 #pragma region ImGui Extra
@@ -616,7 +617,30 @@ bool ImCheckbox(const char* label, bool* value)
 {
     const ImVec2 padding = ImGui::GetStyle().FramePadding;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(padding.x, padding.y * 0.5f));
+    // A box this small needs more contrast than the wide control frames: the default frame tone
+    // vanishes against the glass surface.
+    ImGui::PushStyleColor(ImGuiCol_FrameBg,
+                          MaterialYouTheme::ArgbToImVec4(MaterialYouTheme::FixedSurfaceColors::outlineVariant));
     const bool changed = ImGui::Checkbox(label, value);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+    return changed;
+}
+
+// Section heading that sits close to the block it introduces: roomier above, tight below.
+void ImSectionHeading(const char* label)
+{
+    ImGui::SeparatorText(label);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y * 0.75f);
+}
+
+// Sliders do not need button height; a slimmer track reads better and saves a line per control.
+template <typename... Args>
+bool ImSliderInt(Args&&... args)
+{
+    const ImVec2 padding = ImGui::GetStyle().FramePadding;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(padding.x, padding.y * 0.75f));
+    const bool changed = ImGui::SliderInt(std::forward<Args>(args)...);
     ImGui::PopStyleVar();
     return changed;
 }
@@ -643,8 +667,9 @@ bool ImBeginScreenColumn(const char* id)
     const float avail = ImGui::GetContentRegionAvail().x;
     const float width = std::max(1.0f, std::min(avail, ImGui::GetFontSize() * 44));
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - width) * 0.5f);
-    const bool open = ImGui::BeginChild(id, {width, 0}, ImGuiChildFlags_AlwaysUseWindowPadding,
-                                        ImGuiWindowFlags_NoBackground);
+    // No padding of its own: the main window already provides it, and doubling it up pushed the
+    // content 40px down and 48px in from each side.
+    const bool open = ImGui::BeginChild(id, {width, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
     if (open)
         gContentScrolled = ImGui::GetScrollY() > 1.0f;
     return open;
@@ -715,9 +740,9 @@ bool ImEqualizer(std::span<int> bands)
     float bandWidth = region.x / numBands - padding;
     float bandHeight = std::max(region.y, 160.0f);
     if (numBands == 5)
-        ImGui::SeparatorText(tr("5-Band EQ"));
+        ImSectionHeading(tr("5-Band EQ"));
     if (numBands == 10)
-        ImGui::SeparatorText(tr("10-Band EQ"));
+        ImSectionHeading(tr("10-Band EQ"));
     for (int i = 0; i < numBands; ++i)
     {
         ImGui::BeginGroup();
@@ -948,7 +973,7 @@ void DrawListeningHero(const char* title, const char* subtitle)
     const ImVec2 start = ImGui::GetCursorScreenPos();
     const float width = ImGui::GetContentRegionAvail().x;
     const bool compact = connState == CONN_STATE_CONNECTED;
-    const float height = unit * (compact ? 4.8f : 8.0f);
+    const float height = unit * (compact ? 4.8f : 6.4f);
     auto* draw = ImGui::GetWindowDrawList();
     const ImU32 accent = ImGui::GetColorU32(ImGuiCol_CheckMark);
     ImGlassPanel(start, start + ImVec2(width, height), unit * 1.5f,
@@ -978,7 +1003,7 @@ void DrawListeningHero(const char* title, const char* subtitle)
                                 cup + ImVec2(unit * 0.35f, unit * 0.75f), accent, unit * 0.3f);
         }
     }
-    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * (compact ? 0.5f : 1.2f)));
+    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * (compact ? 0.5f : 0.9f)));
     ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_CheckMark), tr("PERSONAL AUDIO"));
     ImGui::PushFont(nullptr, unit * 1.6f);
     // Fit longer model names without colliding with the illustration.
@@ -989,10 +1014,10 @@ void DrawListeningHero(const char* title, const char* subtitle)
         ImGui::PopFont();
         ImGui::PushFont(nullptr, unit * 1.6f * titleWidth / measured);
     }
-    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * (compact ? 1.6f : 2.8f)));
+    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * (compact ? 1.6f : 2.1f)));
     ImGui::TextUnformatted(title);
     ImGui::PopFont();
-    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * (compact ? 3.5f : 5.4f)));
+    ImGui::SetCursorScreenPos(start + ImVec2(unit * 1.2f, unit * (compact ? 3.5f : 4.3f)));
     ImGui::TextDisabled("%s", subtitle);
     ImGui::SetCursorScreenPos(start);
     ImGui::Dummy({width, height});
@@ -1196,12 +1221,44 @@ void DrawClosePrompt()
 extern void clientRefreshWindowBackdrop(); // SDLMain.cpp
 void DrawAppSettings()
 {
+    // Label on the left, control right-aligned at one shared width, so the column of controls
+    // lines up instead of each row ending wherever its label happened to.
     ClientSettings& settings = clientSettings();
-    if (ImCheckbox(tr("Interface animations"), &settings.animations))
+    const float controlWidth = ImGui::GetFontSize() * 13.0f;
+    ImStylesRAII styles;
+    styles.PushVar(ImGuiStyleVar_CellPadding, ImVec2(ImGui::GetStyle().CellPadding.x, ImGui::GetStyle().CellPadding.y * 0.5f));
+    if (!ImGui::BeginTable("##AppSettings", 2, ImGuiTableFlags_SizingStretchProp))
+        return;
+    ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("control", ImGuiTableColumnFlags_WidthFixed, controlWidth);
+    auto Row = [](const char* label)
+    {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        ImGui::TableNextColumn();
+    };
+    auto RightAlign = [](float width)
+    {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - width));
+    };
+    const float checkboxSize = ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.y; // ImCheckbox halves the padding
+
+    Row(tr("Interface animations"));
+    RightAlign(checkboxSize);
+    if (ImCheckbox("##Animations", &settings.animations))
         clientSettingsSave();
-    if (ImCheckbox(tr("Connection notifications"), &settings.notifications))
+
+    Row(tr("Connection notifications"));
+    RightAlign(checkboxSize);
+    if (ImCheckbox("##Notifications", &settings.notifications))
         clientSettingsSave();
-    DrawLanguageCombo(tr("Language"), ImGui::GetFontSize() * 12.0f);
+
+    Row(tr("Language"));
+    DrawLanguageCombo("##Language", controlWidth);
+
+    Row(tr("Window glass"));
     {
         // iOS 27 exposes the same choice: glass can be dialled from frosted to nearly clear, or off.
         constexpr int kGlassLevels[] = {CLIENT_GLASS_OFF, CLIENT_GLASS_REGULAR, CLIENT_GLASS_CLEAR};
@@ -1210,8 +1267,8 @@ void DrawAppSettings()
             return level == CLIENT_GLASS_OFF ? tr("Off")
                  : level == CLIENT_GLASS_CLEAR ? tr("See-through") : tr("Frosted");
         };
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
-        if (ImGui::BeginCombo(tr("Window glass"), glassName(settings.glassLevel)))
+        ImGui::SetNextItemWidth(controlWidth);
+        if (ImGui::BeginCombo("##Glass", glassName(settings.glassLevel)))
         {
             for (int level : kGlassLevels)
                 if (ImGui::Selectable(glassName(level), settings.glassLevel == level))
@@ -1223,6 +1280,8 @@ void DrawAppSettings()
             ImGui::EndCombo();
         }
     }
+
+    Row(tr("Close button"));
     {
         constexpr int kCloseActions[] = {CLIENT_CLOSE_ASK, CLIENT_CLOSE_MINIMIZE, CLIENT_CLOSE_EXIT};
         auto closeActionName = [](int action)
@@ -1231,8 +1290,8 @@ void DrawAppSettings()
                 : action == CLIENT_CLOSE_EXIT ? tr("Exit the app")
                 : tr("Ask every time");
         };
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
-        if (ImGui::BeginCombo(tr("Close button"), closeActionName(settings.closeAction)))
+        ImGui::SetNextItemWidth(controlWidth);
+        if (ImGui::BeginCombo("##CloseAction", closeActionName(settings.closeAction)))
         {
             for (const int action : kCloseActions)
                 if (ImGui::Selectable(closeActionName(action), action == settings.closeAction))
@@ -1240,20 +1299,27 @@ void DrawAppSettings()
             ImGui::EndCombo();
         }
     }
+
+    Row(tr("Start with Windows (minimized to the tray)"));
+    RightAlign(checkboxSize);
     ImGui::BeginDisabled(!clientPlatformAutoStartSupported());
-    if (ImCheckbox(tr("Start with Windows (minimized to the tray)"), &settings.autoStart))
+    if (ImCheckbox("##AutoStart", &settings.autoStart))
     {
         if (!clientPlatformAutoStartSet(settings.autoStart ? 1 : 0))
             settings.autoStart = clientPlatformAutoStartGet() != 0;
         clientSettingsSave();
     }
     ImGui::EndDisabled();
+
     if (!settings.lastDeviceAddress.empty())
     {
-        ImGui::TextDisabled(tr("Auto-connect: %s (%s)"),
-                            settings.lastDeviceName.empty() ? "last device" : settings.lastDeviceName.c_str(),
-                            settings.lastDeviceAddress.c_str());
-        ImGui::SameLine();
+        char autoConnect[256];
+        std::snprintf(autoConnect, sizeof(autoConnect), tr("Auto-connect: %s (%s)"),
+                      settings.lastDeviceName.empty() ? "last device" : settings.lastDeviceName.c_str(),
+                      settings.lastDeviceAddress.c_str());
+        Row(autoConnect);
+        const float forgetWidth = ImGui::CalcTextSize(tr("Forget")).x + ImGui::GetStyle().FramePadding.x;
+        RightAlign(forgetWidth);
         if (ImGui::SmallButton(tr("Forget")))
         {
             settings.lastDeviceAddress.clear();
@@ -1262,6 +1328,7 @@ void DrawAppSettings()
             clientSettingsSave();
         }
     }
+    ImGui::EndTable();
 }
 
 void DrawDeviceDiscovery()
@@ -1275,7 +1342,7 @@ void DrawDeviceDiscovery()
         static int nDeviceInfo = 0;
         DrawListeningHero(reconnecting ? connectionAttempt.name.c_str() : tr("Your sound. Your space."),
                           reconnecting ? tr("Connecting...") : tr("Connect your Sony headphones."));
-        ImGui::SeparatorText(tr("Connection"));
+        ImSectionHeading(tr("Connection"));
         // Chose, and have the GATT backend active
         static bool usingBLE = false;
         static DEVICE_TYPE deviceType = DEVICE_TYPE_AUTO;
@@ -1291,6 +1358,8 @@ void DrawDeviceDiscovery()
                     styles.PushCol(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
                 if (ImModalButton(tri(PSI_BLUETOOTH, "Classic"), 0, 2))
                     usingBLE = false, needSwitchClientPlatform = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", tr("Use Classic for most devices. Choose BLE (GATT) for LE Audio connections."));
             }
             {
                 ImStylesRAII styles;
@@ -1298,6 +1367,8 @@ void DrawDeviceDiscovery()
                     styles.PushCol(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
                 if (ImModalButton(tri(PSI_BLUETOOTH_ALT, "BLE (GATT)"), 1, 2))
                     usingBLE = true, needSwitchClientPlatform = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", tr("Use Classic for most devices. Choose BLE (GATT) for LE Audio connections."));
             }
         }
         ImGui::BeginDisabled(usingBLE);
@@ -1406,7 +1477,43 @@ void DrawDeviceDiscovery()
         }
         auto DrawDeviceList = [&]()
         {
-            ImGui::SeparatorText(tr("Available Devices"));
+            // The heading carries its own small action. Scanning is instant and already runs every
+            // two seconds, so a full-width button oversold what "refresh" does.
+            static uint64_t refreshFeedbackUntilMs = 0;
+            const bool refreshing = SDL_GetTicks() < refreshFeedbackUntilMs;
+            const float lineRight = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+            const float headingY = ImGui::GetCursorPosY();
+            ImSectionHeading(tr("Available Devices"));
+            {
+                ImStylesRAII styles;
+                styles.PushVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x * 0.5f, 2.0f));
+                styles.PushVar(ImGuiStyleVar_FrameRounding, kImCapsuleRounding);
+                styles.PushCol(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                const char* label = tr(refreshing ? "Refreshing..." : "Refresh");
+                const float iconWidth = ImGui::CalcTextSize(PSI_REFRESH).x;
+                const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
+                const ImVec2 labelSize = ImGui::CalcTextSize(label);
+                const float width = iconWidth + gap + labelSize.x + ImGui::GetStyle().FramePadding.x * 2.0f;
+                ImGui::SameLine(lineRight - width);
+                ImGui::SetCursorPosY(headingY + ImGui::GetStyle().SeparatorTextPadding.y +
+                                     (ImGui::GetTextLineHeight() - ImGui::GetFrameHeight()) * 0.5f);
+                ImGui::BeginDisabled(refreshing || reconnecting);
+                if (ImGui::Button("##Refresh", {width, 0}))
+                {
+                    RefreshDeviceList();
+                    refreshFeedbackUntilMs = SDL_GetTicks() + 900; // Visible acknowledgement of the click
+                }
+                // Label drawn by hand: while a refresh is in flight its icon turns in place.
+                const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                const float left = min.x + ImGui::GetStyle().FramePadding.x;
+                const float centerY = (min.y + max.y) * 0.5f;
+                const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                const float angle = refreshing && clientSettings().animations
+                    ? static_cast<float>(ImGui::GetTime()) * 6.0f : 0.0f;
+                ImDrawTextRotated({left + iconWidth * 0.5f, centerY}, color, PSI_REFRESH, angle);
+                ImGui::GetWindowDrawList()->AddText({left + iconWidth + gap, centerY - labelSize.y * 0.5f}, color, label);
+                ImGui::EndDisabled();
+            }
             if (reconnecting)
             {
                 ImInlineSpinner(ImGui::GetColorU32(ImGuiCol_CheckMark));
@@ -1504,36 +1611,11 @@ void DrawDeviceDiscovery()
             }
             else
             {
-                ImGui::TextUnformatted(tri(PSI_BLUETOOTH, "Ready when you are"));
-                ImGui::TextWrapped(tr("Turn on Bluetooth and connect your headphones in system settings. They will appear here automatically."));
+                // One muted line says it all; "ready" was restating the empty list.
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s", tr("Turn on Bluetooth and connect your headphones in system settings. They will appear here automatically."));
+                ImGui::PopTextWrapPos();
             }
-            // The scan itself is instant, so give the click a short, visible acknowledgement.
-            static uint64_t refreshFeedbackUntilMs = 0;
-            const bool refreshing = SDL_GetTicks() < refreshFeedbackUntilMs;
-            ImGui::BeginDisabled(refreshing);
-            ImStylesRAII refreshStyles;
-            refreshStyles.PushVar(ImGuiStyleVar_FrameRounding, kImCapsuleRounding);
-            if (ImModalButton("##Refresh"))
-            {
-                RefreshDeviceList();
-                refreshFeedbackUntilMs = SDL_GetTicks() + 900;
-            }
-            {
-                // Label drawn by hand: while a refresh is in flight its icon turns in place.
-                const char* label = tr(refreshing ? "Refreshing..." : "Refresh");
-                const ImVec2 center = (ImGui::GetItemRectMin() + ImGui::GetItemRectMax()) * 0.5f;
-                const float iconWidth = ImGui::CalcTextSize(PSI_REFRESH).x;
-                const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
-                const ImVec2 labelSize = ImGui::CalcTextSize(label);
-                const float left = center.x - (iconWidth + gap + labelSize.x) * 0.5f;
-                const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
-                const float angle = refreshing && clientSettings().animations
-                    ? static_cast<float>(ImGui::GetTime()) * 6.0f : 0.0f;
-                ImDrawTextRotated({left + iconWidth * 0.5f, center.y}, color, PSI_REFRESH, angle);
-                ImGui::GetWindowDrawList()->AddText({left + iconWidth + gap, center.y - labelSize.y * 0.5f},
-                                                    color, label);
-            }
-            ImGui::EndDisabled(); // refreshing
             ImGui::EndDisabled(); // reconnecting
         };
         if (connInitResult != MDR_RESULT_OK && connInitResult != MDR_RESULT_INPROGRESS)
@@ -1544,7 +1626,6 @@ void DrawDeviceDiscovery()
                                .c_str());
         }
         DrawDeviceList();
-        ImGui::TextWrapped(tr("Use Classic for most devices. Choose BLE (GATT) for LE Audio connections."));
         if (ImGui::TreeNodeEx(tr("App Settings")))
         {
             DrawAppSettings();
@@ -1777,7 +1858,9 @@ void DrawDeviceControlsHeader()
         ImGui::TableNextColumn();
         ImGui::PushStyleColor(ImGuiCol_ChildBg,
             MaterialYouTheme::ArgbToImVec4(MaterialYouTheme::FixedSurfaceColors::surfaceContainerLow));
-        ImGui::BeginChild("##BatteryCard", {0, 0}, ImGuiChildFlags_AutoResizeY);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 12.0f)); // Card inset, read at Begin
+        ImGui::BeginChild("##BatteryCard", {0, 0}, ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
         ImGui::TextDisabled(tr("BATTERY"));
         bool hasBattery = false;
         for (const MDRBattery& battery : gState.mBatteries)
@@ -1807,7 +1890,9 @@ void DrawDeviceControlsHeader()
         ImGui::EndChild();
         ImGlassEdges(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetStyle().ChildRounding);
         ImGui::TableNextColumn();
-        ImGui::BeginChild("##PlayingCard", {0, 0}, ImGuiChildFlags_AutoResizeY);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 12.0f));
+        ImGui::BeginChild("##PlayingCard", {0, 0}, ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
         ImGui::TextDisabled(tr("NOW PLAYING"));
         const auto title = GetText(MDR_TEXT_TRACK_TITLE);
         const auto artist = GetText(MDR_TEXT_TRACK_ARTIST);
@@ -1841,13 +1926,29 @@ int DeviceVolumeToPercent(int volume)
 
 void DrawDeviceControlsPlayback()
 {
-    ImGui::SeparatorText(tr("Volume"));
+    ImSectionHeading(tr("Volume"));
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    // When the headphones are this PC's audio output, the slider is the OS volume for that output:
+    // Windows then shows the same number and forwards the change to the headphones itself (AVRCP
+    // absolute volume). Setting only the MDR side left the two sliders disagreeing. The endpoint
+    // can appear a little after the MDR link, so keep looking for it while connected.
+    static uint64_t systemVolumeProbeMs = 0;
+    float systemScalar = 0.0f;
+    bool systemVolume = clientPlatformSystemVolumeGet(&systemScalar) != 0;
+    if (!systemVolume && SDL_GetTicks() - systemVolumeProbeMs >= 2000)
+    {
+        systemVolumeProbeMs = SDL_GetTicks();
+        const mdr::String model = GetText(MDR_TEXT_MODEL_NAME);
+        if (!model.empty() && clientPlatformSystemVolumeBind(model.c_str()))
+            systemVolume = clientPlatformSystemVolumeGet(&systemScalar) != 0;
+    }
     // Slider steps are the device's own 0..30 levels; the label adds the percentage Windows shows.
     // "%%" because ImGui parses the slider label as a printf format string.
-    int volume = gState.mPlayback.volume;
+    int volume = systemVolume
+        ? (static_cast<int>(std::lround(systemScalar * kAvrcpVolumeMax)) * kDeviceVolumeMax + kAvrcpVolumeMax / 2) / kAvrcpVolumeMax
+        : gState.mPlayback.volume;
     const mdr::String label = mdr::Format("{}/{}  ({}%%)", volume, kDeviceVolumeMax, DeviceVolumeToPercent(volume));
-    bool changed = ImGui::SliderInt("##Volume", &volume, 0, kDeviceVolumeMax, label.c_str());
+    bool changed = ImSliderInt("##Volume", &volume, 0, kDeviceVolumeMax, label.c_str());
     // Like the Windows volume flyout: mouse wheel while hovering, and Left/Right arrows while
     // hovering or focused, step one device level. Owning the keys keeps the wheel from scrolling
     // the surrounding panel and stops the arrows from moving keyboard focus elsewhere.
@@ -1878,7 +1979,13 @@ void DrawDeviceControlsPlayback()
                 volume = stepped, changed = true;
         }
     }
-    if (changed)
+    if (changed && systemVolume)
+    {
+        // Land exactly on the AVRCP step Windows will send, so the headphones end up on `volume`.
+        const int avrcp = (volume * kAvrcpVolumeMax + kDeviceVolumeMax / 2) / kDeviceVolumeMax;
+        clientPlatformSystemVolumeSet(static_cast<float>(avrcp) / kAvrcpVolumeMax);
+    }
+    else if (changed)
     {
         MDRPlayback playback = gState.mPlayback;
         playback.volume = static_cast<uint8_t>(volume);
@@ -1888,7 +1995,7 @@ void DrawDeviceControlsPlayback()
             gState.mPlaybackVolumeStaged = true;
         }
     }
-    ImGui::SeparatorText(tr("Controls"));
+    ImSectionHeading(tr("Controls"));
     if (ImModalButton(tri(PSI_STEP_BACKWARD, "Prev"), 0, 3))
     {
         MDRPlaybackCommand command{};
@@ -1948,11 +2055,11 @@ void DrawDeviceControlsSound()
                 bool sliderChanged;
                 int sliderLevel = static_cast<int8_t>(gState.mNoise.ambient_level);
                 if (sliderLevel == -1)
-                    sliderChanged = ImGui::SliderInt("##AmbStrength", &sliderLevel, -1, 20, tr("Noise Cancelling"));
+                    sliderChanged = ImSliderInt("##AmbStrength", &sliderLevel, -1, 20, tr("Noise Cancelling"));
                 else if (sliderLevel == 0)
-                    sliderChanged = ImGui::SliderInt("##AmbStrength", &sliderLevel, -1, 20, tr("Wind Noise Reduction"));
+                    sliderChanged = ImSliderInt("##AmbStrength", &sliderLevel, -1, 20, tr("Wind Noise Reduction"));
                 else
-                    sliderChanged = ImGui::SliderInt("##AmbStrength", &sliderLevel, -1, 20, fmt::format("Ambient Sound {}", sliderLevel).c_str());
+                    sliderChanged = ImSliderInt("##AmbStrength", &sliderLevel, -1, 20, fmt::format("Ambient Sound {}", sliderLevel).c_str());
                 if (sliderChanged)
                     gState.mNoise.ambient_level = static_cast<uint8_t>(sliderLevel), changed = true;
                 gState.mNoise.changing_asm_level = sliderChanged && ImGui::IsItemActive();
@@ -1991,14 +2098,14 @@ void DrawDeviceControlsSound()
                 }
                 if (ImGui::RadioButton(tr("Off"), gState.mNoise.mode == MDR_NOISE_MODE_OFF))
                     gState.mNoise.mode = MDR_NOISE_MODE_OFF, changed = true;
-                ImGui::SeparatorText(tr("Ambient Strength"));
+                ImSectionHeading(tr("Ambient Strength"));
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                 {
                     // Only works with AMB enabled
                     ImGui::BeginDisabled(gState.mNoise.mode != MDR_NOISE_MODE_AMBIENT);
                     bool ambientChanged = false;
                     int ambientLevel = gState.mNoise.ambient_level;
-                    if (ImGui::SliderInt("##AmbStrength", &ambientLevel, 1, 20))
+                    if (ImSliderInt("##AmbStrength", &ambientLevel, 1, 20))
                         gState.mNoise.ambient_level = static_cast<uint8_t>(ambientLevel), ambientChanged = changed = true;
                     gState.mNoise.changing_asm_level = ambientChanged && ImGui::IsItemActive();
                     if (ImGui::IsItemDeactivatedAfterEdit())
@@ -2111,13 +2218,13 @@ void DrawDeviceControlsSound()
             SetEqualizerBands(gState.mEqualizerBands);
         if (gState.mEqualizerBands.size() == 5)
         {
-            ImGui::SeparatorText(tr("Clear Bass"));
+            ImSectionHeading(tr("Clear Bass"));
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
             int clearBass = gState.mEqualizer.clear_bass;
-            if (ImGui::SliderInt("##", &clearBass, -10, 10))
+            if (ImSliderInt("##", &clearBass, -10, 10))
                 gState.mEqualizer.clear_bass = static_cast<int8_t>(clearBass), changed = true;
         }
-        ImGui::SeparatorText(tr("DSEE"));
+        ImSectionHeading(tr("DSEE"));
         ImGui::BeginDisabled(!FeatureAvailable(MDR_FEATURE_DSEE));
         if (ImGui::RadioButton(tr("Off"), gState.mEqualizer.dsee_enabled == MDR_FALSE))
             gState.mEqualizer.dsee_enabled = MDR_FALSE, changed = true;
@@ -2400,10 +2507,10 @@ void DrawDeviceControlsSystem()
                 voice.enabled = enabled ? MDR_TRUE : MDR_FALSE, changed = true;
             if (FeatureAvailable(MDR_FEATURE_VOICE_GUIDANCE_VOLUME))
             {
-                ImGui::SeparatorText(tr("Volume"));
+                ImSectionHeading(tr("Volume"));
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                 int volume = voice.volume;
-                if (ImGui::SliderInt("##Volume", &volume, -2, 2))
+                if (ImSliderInt("##Volume", &volume, -2, 2))
                     voice.volume = static_cast<int8_t>(volume), changed = true;
             }
             if (changed)
@@ -2630,7 +2737,9 @@ void DrawDeviceControls()
     if (!gDevice)
         return;
     ImGui::Separator();
-    ImGui::BeginChild("##ControlTabs", {0, 0}, ImGuiChildFlags_None);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 12.0f));
+    ImGui::BeginChild("##ControlTabs", {0, 0}, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
     DrawDeviceControlsTabs();
     ImScrollWhenDraggingAnywhere(ImGui::GetIO().MouseDelta, ImGuiMouseButton_Left);
     ImGui::EndChild();
@@ -2681,7 +2790,9 @@ void DrawDeviceDisconnect()
 extern SDL_Window* gWindow;
 void DrawConnectionNotification()
 {
-    static bool wasReady = false;
+    // "Ready" clears while any request is in flight, so it cannot stand in for the link state:
+    // every volume change used to announce a loss and a reconnect. Announce once per link.
+    static bool announced = false;
     static bool wasConnecting = false;
     static bool lowBatteryReported = false;
     static double lastFailure = -60.0;
@@ -2704,13 +2815,16 @@ void DrawConnectionNotification()
         else
             clientPlatformTrayNotify("SonyHeadphonesClient", text);
     };
-    if (ready && !wasReady)
+    const bool connected = connState == CONN_STATE_CONNECTED && gDevice;
+    if (connected && ready && !announced)
     {
+        announced = true;
         notify(tr("Connected. Ready to listen."), true);
         lowBatteryReported = false;
     }
-    else if (wasReady && !ready)
+    else if (announced && !connected)
     {
+        announced = false;
         if (!gAutoConnectSuppressed)
             notify(tr("Connection lost. Reconnecting..."), false);
         lowBatteryReported = false;
@@ -2744,7 +2858,6 @@ void DrawConnectionNotification()
         else if (known && recovered)
             lowBatteryReported = false;
     }
-    wasReady = ready;
     wasConnecting = connState == CONN_STATE_CONNECTING;
     if (!clientSettings().notifications || now - shownAt >= 4.0)
         return;

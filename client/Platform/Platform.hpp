@@ -113,6 +113,20 @@ extern "C" {
      */
     extern void clientPlatformTrayNotify(const char* title, const char* message);
 
+    /* ---- System audio volume ------------------------------------------------------------------ */
+    /**
+     * @brief Bind to the OS audio output that belongs to the connected headphones (matched by name).
+     * While bound, the client drives this volume instead of the MDR volume command, so the app and
+     * the OS show the same number and the OS pushes the change to the headphones itself.
+     * @return Non-zero when such an output exists right now.
+     */
+    extern int clientPlatformSystemVolumeBind(const char* deviceName);
+    extern void clientPlatformSystemVolumeUnbind(void);
+    /** @return Non-zero and the master volume as 0..1 when bound; zero when unavailable. */
+    extern int clientPlatformSystemVolumeGet(float* outScalar);
+    /** @return Non-zero when the master volume (0..1) was set. */
+    extern int clientPlatformSystemVolumeSet(float scalar);
+
     /* ---- Single instance ---------------------------------------------------------------------- */
     /**
      * @brief Claim the one instance allowed for this user, so two clients never fight over the

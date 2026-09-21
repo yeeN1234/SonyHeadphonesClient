@@ -39,6 +39,10 @@ void clientPlatformDestroy()
 int clientPlatformLocateEmojiFontBinary(const char** outData) { *outData = nullptr; return 0; }
 int clientPlatformLocateLatinFontBinary(const char** outData) { *outData = nullptr; return 0; }
 
+int clientPlatformSystemVolumeBind(const char*) { return 0; }
+void clientPlatformSystemVolumeUnbind(void) {}
+int clientPlatformSystemVolumeGet(float*) { return 0; }
+int clientPlatformSystemVolumeSet(float) { return 0; }
 int clientPlatformSingleInstanceAcquire(int) { return 1; }
 int clientPlatformBluetoothResetSupported(void) { return 0; }
 int clientPlatformBluetoothResetStart(void) { return 0; }

@@ -4,6 +4,7 @@ add_library(Client_PlatformWindows STATIC
         ClientPlatform.cpp
         Tray.cpp
         BluetoothReset.cpp
+        SystemVolume.cpp
 )
 
 target_link_libraries(Client_PlatformWindows
@@ -19,4 +20,5 @@ target_link_libraries(Client_PlatformWindows
         gdiplus
         runtimeobject
         advapi32
+        ole32
 )

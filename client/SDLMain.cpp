@@ -579,8 +579,8 @@ int main(int argc, char** argv)
     auto& style = ImGui::GetStyle();
     // Spacing on Apple's 8pt grid; radii follow its container / control / detail hierarchy.
     style.WindowPadding = ImVec2(24.0f, 20.0f);
-    style.FramePadding = ImVec2(16.0f, 12.0f); // 40pt controls, close to the 44pt hit target
-    style.ItemSpacing = ImVec2(8.0f, 12.0f);
+    style.FramePadding = ImVec2(16.0f, 8.0f); // 32pt controls: this is a mouse-driven desktop app
+    style.ItemSpacing = ImVec2(8.0f, 8.0f);   // 1.5 leading on body text
     style.ItemInnerSpacing = ImVec2(8.0f, 8.0f);
     style.CellPadding = ImVec2(12.0f, 8.0f);
     style.WindowRounding = 16.0f;
@@ -594,7 +594,7 @@ int main(int argc, char** argv)
     style.WindowBorderSize = 0.0f;
     style.ChildBorderSize = 1.0f;
     style.SeparatorTextBorderSize = 0.0f; // Section headings are plain labels, not ruled lines
-    style.SeparatorTextPadding = ImVec2(0.0f, 8.0f);
+    style.SeparatorTextPadding = ImVec2(0.0f, 4.0f); // ImSectionHeading tightens the gap below
     style.ScaleAllSizes(displayScale);
     style.FontScaleDpi = displayScale;
     style.CircleTessellationMaxError = 0.01f;
