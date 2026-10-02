@@ -10,6 +10,7 @@ enum class ClientLanguage
     Auto = 0,        // Follow the system locale
     English = 1,
     ChineseTraditional = 2,
+    Japanese = 3,
 };
 
 /** Apply a language choice (Auto resolves through the platform locale). */

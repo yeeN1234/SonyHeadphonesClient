@@ -15,6 +15,11 @@ extern "C" {
     extern int clientPlatformConnectionInit(int flags);
     extern MDRConnection* clientPlatformConnectionGet();
     extern void clientPlatformConnectionDestroy();
+    /**
+     * @brief Use @p connection instead of the platform's own transport from now on (the demo
+     * replay). The platform never frees it. Pass nullptr to go back to the real transport.
+     */
+    extern void clientPlatformConnectionOverride(MDRConnection* connection);
 
     /**
      * @breif Locate platform-specific font binary data
@@ -32,6 +37,22 @@ extern "C" {
      * track titles such as "Kibō"). Same contract as clientPlatformLocateFontBinary.
      */
     extern int clientPlatformLocateLatinFontBinary(const char** outData);
+    /**
+     * @brief Japanese font: kana plus the Japanese forms of the ideographs shared with Chinese.
+     * Merged before the CJK font when the UI runs in Japanese. Same contract as clientPlatformLocateFontBinary.
+     */
+    extern int clientPlatformLocateJapaneseFontBinary(const char** outData);
+    /**
+     * @brief The bold face of one of the fonts above, for headings: a designed bold keeps dense
+     * ideographs open where an emboldened regular face clogs them. 0 when there is none, and the
+     * heading falls back to emboldening the regular face.
+     * @param script CLIENT_FONT_CJK, CLIENT_FONT_LATIN or CLIENT_FONT_JAPANESE.
+     * Same contract as clientPlatformLocateFontBinary otherwise.
+     */
+    extern int clientPlatformLocateBoldFontBinary(int script, const char** outData);
+#define CLIENT_FONT_CJK 0
+#define CLIENT_FONT_LATIN 1
+#define CLIENT_FONT_JAPANESE 2
 #ifdef __EMSCRIPTEN__
     /**
      * @brief Download bytes through the browser.
@@ -112,6 +133,10 @@ extern "C" {
      * @brief Show a transient notification anchored to the tray icon (no-op where unsupported).
      */
     extern void clientPlatformTrayNotify(const char* title, const char* message);
+
+    /* ---- OS appearance ------------------------------------------------------------------------ */
+    /** @return Non-zero when the OS asks apps to use a light appearance (always on platforms without the setting). */
+    extern int clientPlatformSystemUsesLightTheme(void);
 
     /* ---- System audio volume ------------------------------------------------------------------ */
     /**

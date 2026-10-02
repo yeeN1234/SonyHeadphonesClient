@@ -87,6 +87,59 @@ int clientPlatformLocateLatinFontBinary(const char** outData)
     return size;
 }
 
+// Japanese: Yu Gothic is the modern UI face; Meiryo and MS Gothic are the older fallbacks.
+int clientPlatformLocateJapaneseFontBinary(const char** outData)
+{
+    static const wchar_t* const kCandidates[] = {
+        L"\\Fonts\\YuGothM.ttc",  // Yu Gothic Medium
+        L"\\Fonts\\YuGothR.ttc",  // Yu Gothic Regular
+        L"\\Fonts\\meiryo.ttc",   // Meiryo
+        L"\\Fonts\\msgothic.ttc", // MS Gothic
+    };
+    static const char* data = nullptr;
+    static int size = -1;
+    if (size < 0)
+        size = LoadFirstSystemFont(kCandidates, sizeof(kCandidates) / sizeof(kCandidates[0]), &data);
+    *outData = data;
+    return size;
+}
+
+// The designed bold faces of the fonts above, for headings.
+int clientPlatformLocateBoldFontBinary(int script, const char** outData)
+{
+    static const wchar_t* const kCjk[] = {
+        L"\\Fonts\\msjhbd.ttc",   // Microsoft JhengHei Bold
+        L"\\Fonts\\msyhbd.ttc",   // Microsoft YaHei Bold
+        L"\\Fonts\\meiryob.ttc",  // Meiryo Bold
+        L"\\Fonts\\malgunbd.ttf", // Malgun Gothic Bold
+    };
+    static const wchar_t* const kLatin[] = {
+        L"\\Fonts\\segoeuib.ttf", // Segoe UI Bold
+    };
+    static const wchar_t* const kJapanese[] = {
+        L"\\Fonts\\YuGothB.ttc",  // Yu Gothic Bold
+        L"\\Fonts\\meiryob.ttc",  // Meiryo Bold
+    };
+    static const char* data[3] = {};
+    static int size[3] = {-1, -1, -1};
+    if (script < CLIENT_FONT_CJK || script > CLIENT_FONT_JAPANESE)
+    {
+        *outData = nullptr;
+        return 0;
+    }
+    if (size[script] < 0)
+    {
+        if (script == CLIENT_FONT_CJK)
+            size[script] = LoadFirstSystemFont(kCjk, sizeof(kCjk) / sizeof(kCjk[0]), &data[script]);
+        else if (script == CLIENT_FONT_LATIN)
+            size[script] = LoadFirstSystemFont(kLatin, sizeof(kLatin) / sizeof(kLatin[0]), &data[script]);
+        else
+            size[script] = LoadFirstSystemFont(kJapanese, sizeof(kJapanese) / sizeof(kJapanese[0]), &data[script]);
+    }
+    *outData = data[script];
+    return size[script];
+}
+
 // Emoji: Segoe UI Emoji ships monochrome outlines alongside its colour layers, which is what
 // ImGui's rasterizer can use. Segoe UI Symbol is the pre-Windows 8.1 fallback.
 int clientPlatformLocateEmojiFontBinary(const char** outData)
@@ -108,8 +161,22 @@ static MDRConnectionWindows* gConnClassic = nullptr;
 static MDRConnectionWindowsBLE* gConnBLE = nullptr;
 #endif
 
+static MDRConnection* gConnOverride = nullptr;
+static bool gConnOverrideActive = false;
+
+void clientPlatformConnectionOverride(MDRConnection* connection)
+{
+    gConnOverride = connection;
+    gConnOverrideActive = false;
+}
+
 int clientPlatformConnectionInit(int flags)
 {
+    if (gConnOverride)
+    {
+        gConnOverrideActive = true;
+        return MDR_RESULT_OK;
+    }
     if (gConnClassic != nullptr
 #ifdef MDR_BLE
         || gConnBLE != nullptr
@@ -135,6 +202,7 @@ int clientPlatformConnectionInit(int flags)
 
 void clientPlatformConnectionDestroy()
 {
+    gConnOverrideActive = false;
 #ifdef MDR_BLE
     if (gConnBLE) { mdrConnectionWindowsBLEDestroy(gConnBLE); gConnBLE = nullptr; }
 #endif
@@ -143,6 +211,8 @@ void clientPlatformConnectionDestroy()
 
 MDRConnection* clientPlatformConnectionGet()
 {
+    if (gConnOverride && gConnOverrideActive)
+        return gConnOverride;
     if (gConnClassic != nullptr)
         return mdrConnectionWindowsGet(gConnClassic);
 #ifdef MDR_BLE

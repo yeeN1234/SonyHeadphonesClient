@@ -48,12 +48,19 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         submodules: true
 
     - name: Download Packages
       run: ${{ matrix.script }}
+
+    # A version tag (v2.1.0) builds a release: the app shows the tag's version, and the packet
+    # debugger, a developer tool, is left out. Other builds keep both as they are.
+    - name: Release settings
+      if: startsWith(github.ref, 'refs/tags/v')
+      shell: bash
+      run: echo "RELEASE_ARGS=-DCLIENT_VERSION=${GITHUB_REF_NAME#v} -DMDR_CLIENT_DEBUGGER=OFF" >> "$GITHUB_ENV"
 
     - name: Create Build Environment
       # Some projects don't allow in-source building, so create a separate build directory
@@ -61,9 +68,11 @@ jobs:
       run: cmake -E make_directory ${{github.workspace}}/build
 
     - name: Configure CMake (Windows)
-      working-directory: ${{github.workspace}}/build    
+      working-directory: ${{github.workspace}}/build
       if: runner.os == 'Windows'
-      run: cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DMDR_ENABLE_CODEGEN=OFF -DMDR_CLIENT_DEBUGGER=ON -A ${{ matrix.arch }}
+      # The C/C++ runtime is linked in statically, so the executable runs on a PC without the
+      # Visual C++ Redistributable. The policy applies it to the dependencies as well.
+      run: cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DMDR_ENABLE_CODEGEN=OFF -DMDR_CLIENT_DEBUGGER=ON -A ${{ matrix.arch }} '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>' -DCMAKE_POLICY_DEFAULT_CMP0091=NEW ${{ env.RELEASE_ARGS }}
 
     - name: Configure CMake (Linux)
       env:
@@ -71,12 +80,12 @@ jobs:
         CXX: g++-${{ matrix.gcc }}
       working-directory: ${{github.workspace}}/build
       if: runner.os == 'Linux'
-      run: cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DMDR_ENABLE_CODEGEN=OFF -DMDR_CLIENT_DEBUGGER=ON
+      run: cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DMDR_ENABLE_CODEGEN=OFF -DMDR_CLIENT_DEBUGGER=ON ${{ env.RELEASE_ARGS }}
 
     - name: Configure CMake (macOS)
       working-directory: ${{github.workspace}}/build
       if: runner.os == 'macOS'
-      run: cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DMDR_ENABLE_CODEGEN=OFF -DMDR_CLIENT_DEBUGGER=ON -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+      run: cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DMDR_ENABLE_CODEGEN=OFF -DMDR_CLIENT_DEBUGGER=ON -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 ${{ env.RELEASE_ARGS }}
     
     - name: Build
       working-directory: ${{github.workspace}}/build
@@ -105,10 +114,75 @@ jobs:
       working-directory: ${{github.workspace}}/build/client
       run: zip -r SonyHeadphonesClient.zip SonyHeadphonesClient.app
 
+    - name: Stage files to publish
+      shell: bash
+      run: |
+        mkdir -p package
+        cp -R "${{ matrix.binary_path }}" package/
+        # 3D models for the illustration go next to the executable, when the repository has any.
+        models="$(dirname "${{ matrix.binary_path }}")/Models"
+        if [ -d "$models" ]; then cp -R "$models" package/; fi
+
     - name: Upload a Build Artifact
       uses: actions/upload-artifact@v4
       with:
         # Artifact name
         name: ${{ matrix.artifact_name }}
         # A file, directory or wildcard pattern that describes what to upload
-        path: ${{github.workspace}}/${{matrix.binary_path}}
+        path: ${{github.workspace}}/package
+
+  # Pushing a version tag (git tag v2.1.0 && git push origin v2.1.0) publishes a GitHub release
+  # with every platform's build, once all of them have built and passed the packet replay tests.
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download builds
+      uses: actions/download-artifact@v4
+      with:
+        path: builds
+
+    - name: Package
+      shell: bash
+      run: |
+        mkdir release
+        for dir in builds/*/; do
+          name="$(basename "$dir")-${GITHUB_REF_NAME}"
+          if [ -f "$dir/SonyHeadphonesClient.zip" ]; then
+            # macOS: the app bundle is zipped already.
+            cp "$dir/SonyHeadphonesClient.zip" "release/$name.zip"
+          else
+            # Artifacts lose the executable bit.
+            if [ -f "$dir/SonyHeadphonesClient" ]; then chmod +x "$dir/SonyHeadphonesClient"; fi
+            (cd "$dir" && zip -r -9 "$GITHUB_WORKSPACE/release/$name.zip" .)
+          fi
+        done
+        ls -l release
+
+    - name: Create release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        tag="$GITHUB_REF_NAME"
+        notes="## 下載
+        - **Windows**：\`SonyHeadphonesClient-win-x64-$tag.zip\`（ARM 筆電選 \`win-arm64\`）
+        - **macOS**：\`SonyHeadphonesClient-macos-universal-$tag.zip\`
+        - **Linux**：\`SonyHeadphonesClient-linux-x64-$tag.zip\`（ARM 選 \`linux-arm64\`）
+
+        解壓縮後直接執行，不需要安裝。使用說明請見 [README](https://github.com/$GITHUB_REPOSITORY#readme)。"
+        if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+          # A re-run: replace the files of the release the first run made.
+          gh release upload "$tag" release/*.zip --repo "$GITHUB_REPOSITORY" --clobber
+        else
+          flags=()
+          # A tag with a suffix (v2.1.0-beta.1) is published as a pre-release.
+          if [[ "$tag" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$tag" release/*.zip --repo "$GITHUB_REPOSITORY" \
+            --title "SonyHeadphonesClient $tag" --notes "$notes" --generate-notes "${flags[@]}"
+        fi

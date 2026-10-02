@@ -102,7 +102,11 @@ void __dont_touch_my_garbage_exclamation_marks__()
 
 int clientPlatformLocateEmojiFontBinary(const char** outData) { *outData = nullptr; return 0; }
 int clientPlatformLocateLatinFontBinary(const char** outData) { *outData = nullptr; return 0; }
+int clientPlatformLocateJapaneseFontBinary(const char** outData) { *outData = nullptr; return 0; }
+int clientPlatformLocateBoldFontBinary(int, const char** outData) { *outData = nullptr; return 0; }
 
+void clientPlatformConnectionOverride(MDRConnection*) {}
+int clientPlatformSystemUsesLightTheme(void) { return 1; }
 int clientPlatformSystemVolumeBind(const char*) { return 0; }
 void clientPlatformSystemVolumeUnbind(void) {}
 int clientPlatformSystemVolumeGet(float*) { return 0; }

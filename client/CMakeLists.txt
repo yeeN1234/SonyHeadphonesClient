@@ -1,4 +1,7 @@
-set(CLIENT_VERSION "2.0.0")
+# The version shown in the app. A release build sets it from its tag (-DCLIENT_VERSION=2.1.0).
+if (NOT CLIENT_VERSION)
+    set(CLIENT_VERSION "2.0.0")
+endif ()
 
 set(CLIENT_DEBUGGER_GENERATED_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/Generated/ProtocolV1T1Debugger.cpp"
@@ -38,7 +41,9 @@ if (MDR_PLATFORM_OS STREQUAL "WIN32")
     set_target_properties(SonyHeadphonesClient PROPERTIES
         WIN32_EXECUTABLE $<AND:$<NOT:$<BOOL:${MDR_DEBUG}>>,$<NOT:$<CONFIG:Debug>>>
     )
-    target_sources(SonyHeadphonesClient PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Platform/Windows/app.manifest")
+    target_sources(SonyHeadphonesClient PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/Platform/Windows/app.manifest"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Platform/Windows/app.rc")
 elseif (MDR_PLATFORM_OS STREQUAL "MACOS")
     add_executable(SonyHeadphonesClient MACOSX_BUNDLE)
     set_target_properties(SonyHeadphonesClient PROPERTIES
@@ -57,6 +62,8 @@ target_sources(
         PayloadRecorder.cpp
         Settings.cpp
         Localization.cpp
+        DemoConnection.cpp
+        Headphones3D.cpp
         Fonts/PlexSansIcon.c
 )
 
@@ -178,4 +185,14 @@ target_compile_definitions(SonyHeadphonesClient PRIVATE
 
 if (WIN32)
     target_link_libraries(SonyHeadphonesClient PRIVATE dwmapi)
+endif ()
+
+# 3D models for the headphone illustration (see tooling/ConvertModel.py), next to the executable.
+# Without any, the client draws a generated model.
+file(GLOB CLIENT_MODELS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Models/*.mesh")
+if (CLIENT_MODELS AND NOT MDR_PLATFORM_OS STREQUAL "EMSCRIPTEN")
+    add_custom_command(TARGET SonyHeadphonesClient POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:SonyHeadphonesClient>/Models"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CLIENT_MODELS} "$<TARGET_FILE_DIR:SonyHeadphonesClient>/Models"
+        VERBATIM)
 endif ()

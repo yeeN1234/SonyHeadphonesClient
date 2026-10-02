@@ -425,6 +425,17 @@ namespace
 }
 
 extern "C" {
+int clientPlatformSystemUsesLightTheme(void)
+{
+    // Apps and the shell have separate switches; the app one is what an app should follow.
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                     L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS)
+        return value != 0;
+    return 1;
+}
+
 int clientPlatformSingleInstanceAcquire(int surfaceExisting)
 {
     if (gInstanceMutex)

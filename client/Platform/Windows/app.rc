@@ -1,0 +1,4 @@
+// The application icon (tooling/MakeAppIcon.py draws app.ico). As the first icon resource it is
+// what Explorer shows for the executable, and SDL gives it to the window class for the title bar
+// and the taskbar.
+1 ICON "app.ico"

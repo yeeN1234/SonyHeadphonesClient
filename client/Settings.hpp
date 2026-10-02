@@ -17,6 +17,14 @@ enum ClientGlassLevel
     CLIENT_GLASS_CLEAR = 2,   // More of the desktop shows through
 };
 
+/** Light or dark appearance. */
+enum ClientAppearance
+{
+    CLIENT_APPEARANCE_AUTO = 0, // Follow the OS setting
+    CLIENT_APPEARANCE_LIGHT = 1,
+    CLIENT_APPEARANCE_DARK = 2,
+};
+
 /**
  * Persistent client preferences. Stored as a small key=value file in SDL's preference
  * directory (e.g. %APPDATA%\SonyHeadphonesClient\settings.ini on Windows).
@@ -36,6 +44,7 @@ struct ClientSettings
     bool trayHintShown = false;
     int language = 0; // ClientLanguage: 0 auto, 1 English, 2 Traditional Chinese
     int glassLevel = CLIENT_GLASS_REGULAR;
+    int appearance = CLIENT_APPEARANCE_AUTO;
 };
 
 ClientSettings& clientSettings();

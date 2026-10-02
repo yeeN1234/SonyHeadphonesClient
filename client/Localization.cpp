@@ -10,26 +10,38 @@ namespace
     struct Entry
     {
         const char* english;
-        const char* zhTW;
+        const char* text;
     };
-    // English -> Traditional Chinese. Keep keys byte-identical to the source literals.
+    // One table per language. Keep keys byte-identical to the source literals.
     const Entry kZhTW[] = {
 #include "LocalizationZhTW.inc"
+    };
+    const Entry kJa[] = {
+#include "LocalizationJa.inc"
     };
 
     ClientLanguage gRequested = ClientLanguage::Auto;
     ClientLanguage gEffective = ClientLanguage::English;
     std::unordered_map<std::string, const char*> gTable;
-    bool gTableBuilt = false;
+    ClientLanguage gTableLanguage = ClientLanguage::English; // Which language gTable holds
 
-    void BuildTable()
+    void BuildTable(ClientLanguage language)
     {
-        if (gTableBuilt)
+        if (language == gTableLanguage && !gTable.empty())
             return;
-        gTableBuilt = true;
-        gTable.reserve(sizeof(kZhTW) / sizeof(kZhTW[0]));
-        for (const Entry& entry : kZhTW)
-            gTable.emplace(entry.english, entry.zhTW);
+        gTable.clear();
+        gTableLanguage = language;
+        const Entry* entries = nullptr;
+        size_t count = 0;
+        switch (language)
+        {
+        case ClientLanguage::ChineseTraditional: entries = kZhTW, count = sizeof(kZhTW) / sizeof(kZhTW[0]); break;
+        case ClientLanguage::Japanese: entries = kJa, count = sizeof(kJa) / sizeof(kJa[0]); break;
+        default: return;
+        }
+        gTable.reserve(count);
+        for (size_t i = 0; i < count; ++i)
+            gTable.emplace(entries[i].english, entries[i].text);
     }
 
     ClientLanguage DetectSystemLanguage()
@@ -42,9 +54,16 @@ namespace
             for (int i = 0; i < count; ++i)
             {
                 const SDL_Locale* locale = locales[i];
-                if (locale && locale->language && SDL_strcasecmp(locale->language, "zh") == 0)
+                if (!locale || !locale->language)
+                    continue;
+                if (SDL_strcasecmp(locale->language, "zh") == 0)
                 {
                     detected = ClientLanguage::ChineseTraditional;
+                    break;
+                }
+                if (SDL_strcasecmp(locale->language, "ja") == 0)
+                {
+                    detected = ClientLanguage::Japanese;
                     break;
                 }
             }
@@ -63,7 +82,7 @@ void clientLocalizationSetLanguage(ClientLanguage language)
 {
     gRequested = language;
     gEffective = language == ClientLanguage::Auto ? DetectSystemLanguage() : language;
-    BuildTable();
+    BuildTable(gEffective);
 }
 
 ClientLanguage clientLocalizationEffectiveLanguage()
@@ -77,6 +96,7 @@ const char* clientLanguageName(ClientLanguage language)
     {
     case ClientLanguage::English: return "English";
     case ClientLanguage::ChineseTraditional: return "\xE7\xB9\x81\xE9\xAB\x94\xE4\xB8\xAD\xE6\x96\x87"; // 繁體中文
+    case ClientLanguage::Japanese: return "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E"; // 日本語
     default: return tr("System default");
     }
 }
@@ -85,7 +105,7 @@ const char* tr(const char* english)
 {
     if (!english || gEffective == ClientLanguage::English)
         return english;
-    BuildTable();
+    BuildTable(gEffective);
     const auto it = gTable.find(english);
     return it == gTable.end() ? english : it->second;
 }
