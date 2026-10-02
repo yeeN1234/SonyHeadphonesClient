@@ -4,11 +4,8 @@
 name: Deploy Client to GitHub Pages
 
 on:
-  # Runs on pushes targeting the default branch
-  push:
-    branches: ["v1-compat"]
-
-  # Allows you to run this workflow manually from the Actions tab
+  # Manual only for now (Actions tab → Run workflow): this fork publishes Windows builds only, and a
+  # deploy needs GitHub Pages enabled first (Settings → Pages → Source: GitHub Actions).
   workflow_dispatch:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages

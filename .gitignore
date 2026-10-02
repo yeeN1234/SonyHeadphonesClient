@@ -549,3 +549,8 @@ tooling/ida/input/
 *.til
 
 build-*/
+
+# 3D models for the headphone illustration (tooling/ConvertModel.py): third-party models stay on
+# the developer's machine, out of the repository and the releases.
+*.dae
+client/Models/

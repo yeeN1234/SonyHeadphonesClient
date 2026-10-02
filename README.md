@@ -57,7 +57,7 @@ SonyHeadphonesClient 是 Sony 耳機的桌面控制程式。它透過藍牙直�
 > **第一次執行時看到「Windows 已保護您的電腦」？**  
 > 這是因為程式沒有數位簽章。點「其他資訊」→「仍要執行」即可。
 
-**系統需求**：Windows 10 或 11、有藍牙的電腦，以及支援 Sony Sound Connect App 的耳機（見[支援的耳機](#支援的耳機)）。macOS 與 Linux 版也會一起發布在 Releases，但這個分支主要在 Windows 上測試。
+**系統需求**：Windows 10 或 11、有藍牙的電腦，以及支援 Sony Sound Connect App 的耳機（見[支援的耳機](#支援的耳機)）。目前只提供 Windows 版，其他平台可以[自己編譯](#linuxmacos-與網頁版)。
 
 **解除安裝**：先在「程式設定」關閉「開機時自動啟動」，結束程式後刪除資料夾即可。設定存在 `%APPDATA%\SonyHeadphonesClient`，要一併清除就刪掉這個資料夾。
 
@@ -217,7 +217,9 @@ SonyHeadphonesClient.exe --demo tests/WF-1000XM5-6.1.0
 
 ### 3D 模型
 
-首頁與連線動畫的 3D 模型預設由程式即時產生。若要顯示特定型號的模型，用 [tooling/ConvertModel.py](tooling/ConvertModel.py) 把 COLLADA（`.dae`）檔轉成 `client/Models/<型號>.mesh`（例如 `WH-1000XM5.mesh`），重新編譯後會複製到執行檔旁邊的 `Models` 資料夾；檔名出現在耳機型號裡時就會使用。請只使用你有權散布的模型。
+首頁與連線動畫的 3D 模型預設由程式即時產生，Release 版與本頁的截圖都是這個模型。若要在自己的電腦上顯示特定型號的模型，用 [tooling/ConvertModel.py](tooling/ConvertModel.py) 把 COLLADA（`.dae`）檔轉成 `client/Models/<型號>.mesh`（例如 `WH-1000XM5.mesh`），重新編譯後會複製到執行檔旁邊的 `Models` 資料夾；檔名出現在耳機型號裡時就會使用。
+
+`*.dae` 與 `client/Models/` 已列在 `.gitignore`：第三方模型只留在自己的電腦，不會進到 repo，也不會出現在 Release。
 
 ### 發布新版本
 
@@ -228,14 +230,17 @@ git tag v2.1.0
 git push origin v2.1.0
 ```
 
-GitHub Actions（[`.github/workflows/cmake.yml`](.github/workflows/cmake.yml)）會編譯 Windows、macOS、Linux 版本並執行封包重播測試，全部通過後建立 Release，附上各平台的壓縮檔與自動產生的更新說明。
+GitHub Actions（[`.github/workflows/cmake.yml`](.github/workflows/cmake.yml)）會編譯 Windows 的 x64 與 ARM64 版本並執行封包重播測試，通過後建立 Release，附上兩個壓縮檔與自動產生的更新說明。
 
 - 程式顯示的版本號取自標籤（`v2.1.0` → `2.1.0`）
 - 標籤帶有 `-`（例如 `v2.1.0-beta.1`）會標記為預發布版本
+- 發布版不含協定除錯器，並把 C++ 執行環境包進執行檔，使用者不必另外安裝
 - 平常推送程式碼也會自動編譯，可以在 Actions 頁面下載測試版
+- 網頁版（`emscripten.yml`）改成只在 Actions 頁面手動執行；部署前要先在 Settings → Pages 把 Source 設成 GitHub Actions
 
 ## 致謝與授權
 
 - 上游專案：[mos9527/SonyHeadphonesClient](https://github.com/mos9527/SonyHeadphonesClient)，源自 [Plutoberth/SonyHeadphonesClient](https://github.com/Plutoberth/SonyHeadphonesClient)
 - 以 [MIT 授權](LICENSE)釋出
+- 使用的開源元件：[SDL](https://www.libsdl.org/)（zlib）、[Dear ImGui](https://github.com/ocornut/imgui)（MIT）、[FreeType](https://freetype.org/)（FTL）、[{fmt}](https://github.com/fmtlib/fmt)（MIT）。Portions of this software are copyright © 2024 The FreeType Project (www.freetype.org). All rights reserved.
 - Sony 與各產品名稱為 Sony Group Corporation 的商標。本專案為獨立開發，與 Sony 無關，使用風險自負
